@@ -17,7 +17,7 @@ use std::{
 const COMMANDS: &str = "    open [URI]:[PORT]/[URN]\n    quit\n";
 
 fn main() -> IoResult<()> {
-    let (mut uri, mut port, mut urn);
+    let (mut url, mut port, mut urn);
 
     // User Interface -- Native CLI
     println!("==== \"Simple\" Web Browser! ====");
@@ -32,6 +32,7 @@ fn main() -> IoResult<()> {
             Err(e) => { println!("ERROR: {e}"); },
             _ => {}
         }
+        if command_line.starts_with("http://") { command_line = command_line["http://".len()..].to_string(); }
 
         let (command, args): (String, Vec<Vec<String>>) = command_line
             .trim()
@@ -44,19 +45,18 @@ fn main() -> IoResult<()> {
                            .collect())
                       .collect()))
             .unwrap_or((command_line.split(' ').next().unwrap().trim_end().to_string(), vec![]));
-        print!("{command_line}");
 
         if !command.is_empty() {
-            command_line = String::new();
+            print!("{command_line}");
             if command == "open" {
-                uri = args.get(0).cloned().unwrap_or(vec![String::from("localhost")]).get(0).cloned().unwrap();
+                url = args.get(0).cloned().unwrap_or(vec![String::from("localhost")]).get(0).cloned().unwrap();
                 port = args.get(0).cloned().unwrap_or(vec![String::new(), String::from("3000")]).get(1).cloned().unwrap_or(String::from("3000"));
                 urn = args.get(1).cloned().unwrap_or(vec![String::from("")]).get(0).cloned().unwrap_or(String::from(""));
 
                 // Request Handling
                 loop {
-                    let mut stream = TcpStream::connect(format!("{uri}:{port}"))?;
-                    let request = format!("GET /{urn} HTTP/1.1\r\nHost: {uri}\r\n\r\n");
+                    let mut stream = TcpStream::connect(format!("{url}:{port}"))?;
+                    let request = format!("GET /{urn} HTTP/1.1\r\nHost: {url}\r\n\r\n");
                     stream.write_all(&request.into_bytes())?;
                     stream.flush()?;
 
@@ -84,17 +84,23 @@ fn main() -> IoResult<()> {
                     // Body (might only deal with HTML for now)
                     body.push_str(&http_response[byte_counter..http_response.len()]);
 
-
-                    
                     // Response Processing
-                    //
+                    // >> Status Line
                     let proc_status_line: Vec<String> = status_line
-                        .split(' ')
+                        .splitn(3, ' ')
                         .map(|s| String::from(s.trim_end()))
                         .collect();
 
+                    // >>>> Non 2XX Response Code Handling
+                    let (response_code, message) = (proc_status_line[1].clone().parse::<usize>().unwrap(), proc_status_line[2].clone());
+                    if response_code >= 400 {
+                        println!("ERROR: {response_code} {message}");
+                        break;
+                    }
+
                     println!("Status Line: {:?}", proc_status_line);
                     
+                    // >> Header
                     let mut proc_header: HashMap<String, Vec<Vec<_>>> = HashMap::new();
                     for line in header.lines() {
                         if line.is_empty() { break; }
@@ -113,6 +119,7 @@ fn main() -> IoResult<()> {
                             );
                     }
 
+                    // >>>> Redirect Checks
                     let check_redirect = proc_header.get(&String::from("Refresh")).cloned().unwrap_or(vec![]);
                     if !check_redirect.is_empty() {
                         urn = check_redirect
@@ -125,20 +132,26 @@ fn main() -> IoResult<()> {
 
                     println!("Header: {:?}", proc_header);
 
-                    let proc_body = body;
+                    // >> Body
+                    let proc_body = body
+                        .trim_end()
+                        .to_string();
 
                     println!("Body: {}", proc_body);
 
                     break;
                 }
 
-                println!("\nNOTICE: Finished opening web page");
+                println!("\nNOTICE: Finished web page fetching attempt");
             } else if command == "quit" {
                 break;
             } else {
-                println!("ERROR: command '{command}' not recognized");
+                println!("ERROR: Command '{command}' not recognized");
             }
+        } else {
+            println!("ERROR: Please enter something");
         }
+        command_line = String::new();
     }
 
     Ok(())

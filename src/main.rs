@@ -13,16 +13,16 @@ where
     buf
 }
 
-const PACKET_MAX_BYTES: usize = 256;
+const PACKET_MAX_BYTES: usize = 512;
 
 fn main() -> IoResult<()> {
     let (uri, port) = ("monta.if.its.ac.id", "80");
-    let mut stream = TcpStream::connect(format!("{uri}:{port}"))?;
-
     let mut urn = String::from("");
     // Request Handling
     'request: loop {
+        println!("full URL: {uri}/{urn}");
         let request = format!("GET /{urn} HTTP/1.1\r\nHost: {uri}\r\n\r\n");
+        let mut stream = TcpStream::connect(format!("{uri}:{port}"))?;
         stream.write(&request.into_bytes())?;
         stream.flush()?;
 
@@ -35,12 +35,13 @@ fn main() -> IoResult<()> {
             let mut byte_counter = 0;
             let chunked_http_response = String::from_utf8(chunked_http_response).unwrap();
 
+            println!("{chunked_http_response}");
+
             // Status
             if !status_line.ends_with("\r\n") {
                 status_line.push_str(&chunked_http_response[0..chunked_http_response.find('\n').unwrap() + 1]);
                 if status_line.len() == PACKET_MAX_BYTES { continue; }
                 byte_counter = status_line.len();
-                println!("Status Line: {}", status_line);
             }
 
             // Header
@@ -48,8 +49,6 @@ fn main() -> IoResult<()> {
                 header.push_str(&chunked_http_response[byte_counter..chunked_http_response.find('<').unwrap_or(chunked_http_response.len())]);
                 if !header.ends_with("\r\n\r\n") { continue; }
                 byte_counter = chunked_http_response.find('<').unwrap_or(0);
-                println!("Header:");
-                print!("{}", header);
             }
 
             if chunked_http_response.len() < PACKET_MAX_BYTES { break; }
@@ -57,8 +56,6 @@ fn main() -> IoResult<()> {
             // Body (might only deal with HTML for now)
             body.push_str(&chunked_http_response[byte_counter..chunked_http_response.len()]);
             if chunked_http_response.len() == 256 { continue; }
-            println!("Body:");
-            print!("{}", body);
 
             if chunked_http_response.len() < PACKET_MAX_BYTES { break; }
         }
@@ -70,7 +67,7 @@ fn main() -> IoResult<()> {
             .map(|s| String::from(s.trim_end()))
             .collect();
 
-        println!("{:?}", proc_status_line);
+        println!("Status Line: {:?}", proc_status_line);
         
         let mut proc_header: HashMap<String, Vec<Vec<_>>> = HashMap::new();
         for line in header.lines() {
@@ -101,14 +98,14 @@ fn main() -> IoResult<()> {
             continue;
         }
 
-        println!("{:?}", proc_header);
+        println!("Header: {:?}", proc_header);
 
         let proc_body: Vec<String> = body
             .lines()
             .map(|s| String::from(s))
             .collect();
 
-        println!("{:?}", proc_body);
+        println!("Body: {:?}", proc_body);
 
         break 'request;
     }

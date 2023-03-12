@@ -2,7 +2,7 @@
 ## Made with Rust
 
 ### Features
-- [ ] open a web page given a URI and shows the text <br>
+- [x] open a web page given a URI and shows the text <br>
 - [ ] show a list of clickable links <br>
 - [ ] download a file regardless of its size <br>
 - [ ] download a file in parallel (OPTIONAL) <br>
@@ -13,3 +13,5 @@
 
 
 ### Optional Features
+- [x] basic Terminal UI
+- [x] basic command system

@@ -9,7 +9,7 @@ URI defaults to **localhost:3000/**
 ### Features
 - [x] open a web page given a URI and shows the text
 - [ ] show a list of clickable links
-- [ ] download a file regardless of its size
+- [x] download a file regardless of its size (doesn't work for binaries)
 - [ ] download a file in parallel (OPTIONAL)
 - [x] follow redirections
 - [x] show respective HTTP error messages
@@ -21,5 +21,6 @@ URI defaults to **localhost:3000/**
 - [x] basic command system
 
 ### Planned Additional Features
-- [ ] loading screen
+- [ ] loading indicator
+- [ ] download progress bar
 - [ ] a much more interactive TUI

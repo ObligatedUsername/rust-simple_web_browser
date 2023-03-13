@@ -3,7 +3,12 @@ use std::{
     net::TcpStream,
     collections::HashMap
 };
+use base64::{
+    Engine as _,
+    engine::general_purpose
+};
 
+// Read N amount of bytes from reader
 // fn read_n<R>(reader: R, bytes_to_read: u64) -> Vec<u8>
 // where
 //     R: Read,
@@ -18,6 +23,7 @@ const COMMANDS: &str = "    open [URI]:[PORT]/[URN]\n    quit\n";
 
 fn main() -> IoResult<()> {
     let (mut url, mut port, mut urn);
+    let mut auth = String::new();
 
     // User Interface -- Native CLI
     println!("==== \"Simple\" Web Browser! ====");
@@ -29,7 +35,7 @@ fn main() -> IoResult<()> {
         // Command Line Input & Processing
         print!("> ");
         match io::stdin().read_line(&mut command_line) {
-            Err(e) => { println!("ERROR: {e}"); },
+            Err(e) => { println!("error: {e}"); },
             _ => {}
         }
         if command_line.starts_with("http://") { command_line = command_line["http://".len()..].to_string(); }
@@ -56,7 +62,10 @@ fn main() -> IoResult<()> {
                 // Request Handling
                 loop {
                     let mut stream = TcpStream::connect(format!("{url}:{port}"))?;
-                    let request = format!("GET /{urn} HTTP/1.1\r\nHost: {url}\r\n\r\n");
+                    let request = format!("GET /{urn} HTTP/1.1\r\nHost: {url}{auth}\r\n\r\n");
+                    
+                    auth = String::new();
+
                     stream.write_all(&request.into_bytes())?;
                     stream.flush()?;
 
@@ -91,13 +100,6 @@ fn main() -> IoResult<()> {
                         .map(|s| String::from(s.trim_end()))
                         .collect();
 
-                    // >>>> Non 2XX Response Code Handling
-                    let (response_code, message) = (proc_status_line[1].clone().parse::<usize>().unwrap(), proc_status_line[2].clone());
-                    if response_code >= 400 {
-                        println!("ERROR: {response_code} {message}");
-                        break;
-                    }
-
                     println!("Status Line: {:?}", proc_status_line);
                     
                     // >> Header
@@ -119,7 +121,41 @@ fn main() -> IoResult<()> {
                             );
                     }
 
-                    // >>>> Redirect Checks
+                    println!("Header: {:?}", proc_header);
+
+                    // >> Body
+                    let proc_body = body
+                        .trim_end()
+                        .to_string();
+
+                    println!("Body: {}", proc_body);
+
+                    //  Response Handling
+                    // >> Non 2XX Response Code Handling
+                    let (response_code, message) = (proc_status_line[1].clone().parse::<usize>().unwrap(), proc_status_line[2].clone());
+                    if response_code == 401 { // HTTP Basic Auth
+                        println!("NOTICE: Authorization is Needed, please enter your username and password below, separated by a space");
+                        println!("(you may ENTER if you don't wish to input your credentials.):");
+                        match io::stdin().read_line(&mut auth) {
+                            Err(e) => { println!("error: {e}"); },
+                            _ => {}
+                        }
+
+                        if auth == "\n" { break; }
+                        auth = String::from("\r\nAuthorization: ") +
+                            &proc_header.get(&String::from("WWW-Authenticate"))
+                                .unwrap().get(0).unwrap().get(0).unwrap()
+                                .split(' ').next().unwrap() +
+                            " " +
+                            &general_purpose::STANDARD.encode(auth.replace(" ", ":").trim_end().as_bytes());
+                        continue;
+                    }
+                    else if response_code >= 400 {
+                        println!("ERROR: {response_code} {message}");
+                        break;
+                    }
+
+                    // >> Redirect Checks
                     let check_redirect = proc_header.get(&String::from("Refresh")).cloned().unwrap_or(vec![]);
                     if !check_redirect.is_empty() {
                         urn = check_redirect
@@ -129,15 +165,6 @@ fn main() -> IoResult<()> {
                         urn = urn.splitn(4, '/').skip(3).next().unwrap().to_string();
                         continue;
                     }
-
-                    println!("Header: {:?}", proc_header);
-
-                    // >> Body
-                    let proc_body = body
-                        .trim_end()
-                        .to_string();
-
-                    println!("Body: {}", proc_body);
 
                     break;
                 }

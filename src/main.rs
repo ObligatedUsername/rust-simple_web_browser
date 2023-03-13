@@ -9,6 +9,11 @@ use base64::{
     engine::general_purpose
 };
 
+// find_subsequence by Francis Gagné on StackOverflow
+fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack.windows(needle.len()).position(|window| window == needle)
+}
+
 // Read N amount of bytes from reader
 // fn read_n<R>(reader: R, bytes_to_read: u64) -> Vec<u8>
 // where
@@ -21,7 +26,7 @@ use base64::{
 
 // const PACKET_MAX_BYTES: usize = 512;
 const COMMANDS: &str = "    open [URI]:[PORT]/[URN]\n    quit\n";
-const SUPPORTED_FILE_TYPES: [&str; 1] = ["text/plain"];
+const SUPPORTED_FILE_TYPES: [&str; 2] = ["text/plain", "application/pdf"];
 
 fn main() -> IoResult<()> {
     let (mut url, mut port, mut urn);
@@ -74,22 +79,22 @@ fn main() -> IoResult<()> {
                     let mut stream_buf_reader = BufReader::new(&mut stream);
 
                     // Parser
-                    let (mut status_line, mut header, mut body) = (String::new(), String::new(), String::new());
+                    let (mut status_line, mut header, mut body) = (String::new(), String::new(), vec![]);
                     let mut http_response = vec![];
                     stream_buf_reader.read_to_end(&mut http_response)?;
                     let mut byte_counter;
-                    let http_response = String::from_utf8_lossy(http_response.as_slice());
+                    let http_response = http_response.as_slice();
 
                     // Status
-                    status_line.push_str(&http_response[0..http_response.find("\r\n").unwrap() + 2]);
+                    status_line.push_str(&String::from_utf8_lossy(&http_response[..find_subsequence(http_response, b"\r\n").unwrap() + 2]));
                     byte_counter = status_line.len();
 
                     // Header
-                    header.push_str(&http_response[byte_counter..http_response.find("\r\n\r\n").unwrap() + 4]);
-                    byte_counter = http_response.find("\r\n\r\n").unwrap() + 4;
+                    header.push_str(&String::from_utf8_lossy(&http_response[byte_counter..find_subsequence(http_response, b"\r\n\r\n").unwrap() + 4]));
+                    byte_counter = find_subsequence(http_response, b"\r\n\r\n").unwrap() + 4;
 
                     // Body (might only deal with HTML for now)
-                    body.push_str(&http_response[byte_counter..http_response.len()]);
+                    body.append(&mut http_response[byte_counter..http_response.len()].to_owned());
 
                     // Response Processing
                     // >> Status Line
@@ -98,7 +103,8 @@ fn main() -> IoResult<()> {
                         .map(|s| String::from(s.trim_end()))
                         .collect();
 
-                    // println!("Status Line: {:?}", proc_status_line);
+                    println!("Status Line: {:?}", proc_status_line);
+                    println!();
                     
                     // >> Header
                     let mut proc_header: HashMap<String, Vec<Vec<_>>> = HashMap::new();
@@ -123,11 +129,10 @@ fn main() -> IoResult<()> {
                     println!();
 
                     // >> Body
-                    let proc_body = body
-                        .trim_end()
-                        .to_string();
+                    let proc_body = if body.ends_with(b"\n") { &body[..body.len() - 1] }
+                    else { &body };
 
-                    println!("Body:\n{}", proc_body);
+                    println!("Body:\n{}", String::from_utf8_lossy(proc_body));
 
                     // Response Handling
                     // >> Non 2XX Response Code Handling
@@ -193,11 +198,11 @@ fn main() -> IoResult<()> {
                                 .unwrap();
 
                             let mut f = File::create(downloaded_file_path + "/" + &filename)?;
-                            f.write_all(proc_body.as_bytes())?;
+                            f.write_all(proc_body)?;
 
                             println!();
                             println!("!!!!!!!!");
-                            println!("NOTICE: Finished downloading {} with the size of {}", filename, proc_body.as_bytes().len());
+                            println!("NOTICE: Finished downloading {} with the size of {}", filename, proc_body.len());
                             println!("!!!!!!!!");
                             println!();
 

@@ -1,7 +1,8 @@
 use std::{
     io::{self, prelude::*, BufReader, Result as IoResult},
     net::TcpStream,
-    collections::HashMap
+    collections::HashMap,
+    fs::{File, DirBuilder}
 };
 use base64::{
     Engine as _,
@@ -20,6 +21,7 @@ use base64::{
 
 // const PACKET_MAX_BYTES: usize = 512;
 const COMMANDS: &str = "    open [URI]:[PORT]/[URN]\n    quit\n";
+const SUPPORTED_FILE_TYPES: [&str; 1] = ["text/plain"];
 
 fn main() -> IoResult<()> {
     let (mut url, mut port, mut urn);
@@ -53,7 +55,7 @@ fn main() -> IoResult<()> {
             .unwrap_or((command_line.split(' ').next().unwrap().trim_end().to_string(), vec![]));
 
         if !command.is_empty() {
-            print!("{command_line}");
+            println!("{command_line}");
             if command == "open" {
                 url = args.get(0).cloned().unwrap_or(vec![String::from("localhost")]).get(0).cloned().unwrap();
                 port = args.get(0).cloned().unwrap_or(vec![String::new(), String::from("3000")]).get(1).cloned().unwrap_or(String::from("3000"));
@@ -75,20 +77,16 @@ fn main() -> IoResult<()> {
                     let (mut status_line, mut header, mut body) = (String::new(), String::new(), String::new());
                     let mut http_response = vec![];
                     stream_buf_reader.read_to_end(&mut http_response)?;
-                    let mut byte_counter = 0;
-                    let http_response = String::from_utf8(http_response).unwrap();
+                    let mut byte_counter;
+                    let http_response = String::from_utf8_lossy(http_response.as_slice());
 
                     // Status
-                    if !status_line.ends_with("\r\n") {
-                        status_line.push_str(&http_response[0..http_response.find('\n').unwrap() + 1]);
-                        byte_counter = status_line.len();
-                    }
+                    status_line.push_str(&http_response[0..http_response.find("\r\n").unwrap() + 2]);
+                    byte_counter = status_line.len();
 
                     // Header
-                    if !header.ends_with("\r\n\r\n") {
-                        header.push_str(&http_response[byte_counter..http_response.find('<').unwrap_or(http_response.len())]);
-                        byte_counter = http_response.find('<').unwrap_or(0);
-                    }
+                    header.push_str(&http_response[byte_counter..http_response.find("\r\n\r\n").unwrap() + 4]);
+                    byte_counter = http_response.find("\r\n\r\n").unwrap() + 4;
 
                     // Body (might only deal with HTML for now)
                     body.push_str(&http_response[byte_counter..http_response.len()]);
@@ -100,7 +98,7 @@ fn main() -> IoResult<()> {
                         .map(|s| String::from(s.trim_end()))
                         .collect();
 
-                    println!("Status Line: {:?}", proc_status_line);
+                    // println!("Status Line: {:?}", proc_status_line);
                     
                     // >> Header
                     let mut proc_header: HashMap<String, Vec<Vec<_>>> = HashMap::new();
@@ -122,18 +120,20 @@ fn main() -> IoResult<()> {
                     }
 
                     println!("Header: {:?}", proc_header);
+                    println!();
 
                     // >> Body
                     let proc_body = body
                         .trim_end()
                         .to_string();
 
-                    println!("Body: {}", proc_body);
+                    println!("Body:\n{}", proc_body);
 
-                    //  Response Handling
+                    // Response Handling
                     // >> Non 2XX Response Code Handling
                     let (response_code, message) = (proc_status_line[1].clone().parse::<usize>().unwrap(), proc_status_line[2].clone());
                     if response_code == 401 { // HTTP Basic Auth
+                        println!();
                         println!("NOTICE: Authorization is Needed, please enter your username and password below, separated by a space");
                         println!("(you may ENTER if you don't wish to input your credentials.):");
                         match io::stdin().read_line(&mut auth) {
@@ -151,7 +151,12 @@ fn main() -> IoResult<()> {
                         continue;
                     }
                     else if response_code >= 400 {
+                        println!();
+                        println!("!!!!!!!!");
                         println!("ERROR: {response_code} {message}");
+                        println!("!!!!!!!!");
+                        println!();
+
                         break;
                     }
 
@@ -163,13 +168,54 @@ fn main() -> IoResult<()> {
                             .get(1).cloned().unwrap()
                             .clone();
                         urn = urn.splitn(4, '/').skip(3).next().unwrap().to_string();
+
+                        println!();
+                        println!("!!!!!!!!");
+                        println!("NOTICE: Redirecting to {urn}");
+                        println!("!!!!!!!!");
+                        println!();
+
                         continue;
                     }
+
+                    // >> File Downloads
+                    if proc_header.get(&String::from("Content-Type")).is_some() {
+                        let filename = proc_header.get(&String::from("Content-Disposition")).unwrap_or(&vec![vec![]])
+                        .get(1).unwrap_or(&vec![]).get(1).unwrap_or(&String::from("unnamed")).trim_matches('\"').to_string();
+
+                        let filetype = proc_header.get(&String::from("Content-Type")).unwrap()
+                            .get(0).unwrap().get(0).unwrap();
+                        if SUPPORTED_FILE_TYPES.iter().any(|s| s == filetype) {
+                            let downloaded_file_path = String::from("./downloads");
+                            DirBuilder::new()
+                                .recursive(true)
+                                .create(downloaded_file_path.clone())
+                                .unwrap();
+
+                            let mut f = File::create(downloaded_file_path + "/" + &filename)?;
+                            f.write_all(proc_body.as_bytes())?;
+
+                            println!();
+                            println!("!!!!!!!!");
+                            println!("NOTICE: Finished downloading {} with the size of {}", filename, proc_body.as_bytes().len());
+                            println!("!!!!!!!!");
+                            println!();
+
+                            break;
+                        }
+                    }
+
+                    // TODO: HTML Parsing and Simple Display
+
+                    println!();
+                    println!("!!!!!!!!");
+                    println!("NOTICE: Finished reading {url}:{port}/{urn}");
+                    println!("!!!!!!!!");
+                    println!();
 
                     break;
                 }
 
-                println!("\nNOTICE: Finished web page fetching attempt");
             } else if command == "quit" {
                 break;
             } else {

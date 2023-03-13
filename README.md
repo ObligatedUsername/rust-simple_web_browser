@@ -1,7 +1,7 @@
 # "Simple" Web Browser (in Rust)
 
 ## Description
-A very simple TcpStream-based HTTP-only CLI browser.
+A very simple (& slow) TcpStream-based HTTP-only CLI browser.
 
 ## A few details...
 URI defaults to **localhost:3000/**
@@ -13,9 +13,13 @@ URI defaults to **localhost:3000/**
 - [ ] download a file in parallel (OPTIONAL)
 - [x] follow redirections
 - [x] show respective HTTP error messages
-- [ ] open a web page that is protected by HTTP Basic Authentication
+- [x] open a web page that is protected by HTTP Basic Authentication
 - [ ] can access a web page that is protected behind a login page
 
 ### Additional Features
 - [x] basic Terminal UI
 - [x] basic command system
+
+### Planned Additional Features
+- [ ] loading screen
+- [ ] a much more interactive TUI

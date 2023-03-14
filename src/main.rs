@@ -1,13 +1,14 @@
 use std::{
-    io::{self, prelude::*, BufReader, Result as IoResult},
+    io::{self, stdout, prelude::*, BufReader, Result as IoResult},
     net::TcpStream,
     collections::HashMap,
-    fs::{File, DirBuilder}
+    fs::{self, File, DirBuilder}
 };
 use base64::{
     Engine as _,
     engine::general_purpose
 };
+use spinners::{Spinner, Spinners};
 
 // find_subsequence by Francis Gagné on StackOverflow
 fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
@@ -25,45 +26,68 @@ fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 // }
 
 // const PACKET_MAX_BYTES: usize = 512;
-const COMMANDS: &str = "    open [URI]:[PORT]/[URN]\n    quit\n";
-const SUPPORTED_FILE_TYPES: [&str; 2] = ["text/plain", "application/pdf"];
 
 fn main() -> IoResult<()> {
+    // commands -> <command, arguments>
+    let commands: HashMap<&str, [&str; 2]> = HashMap::from([
+        ("open", ["[URI]:[PORT]/[URN]", "\"Opens a web page from the given URL.\""]),
+        ("download", ["[URI]:[PORT]/[URN]", "\"Downloads file from the given URL. (Supported file types so far are: html, txt, pdf)\""]),
+        ("help", ["", "\"Shows this message.\""]),
+        ("quit", ["", "\"Exit from this program.\""]),
+    ]);
+    // supported_download_file_types -> <mime_type, MIME type>
+    let supported_download_file_types: HashMap<&str, &str> = HashMap::from([
+        ("text/plain", "txt"),
+        ("text/html", "html"),
+        ("application/pdf", "pdf"),
+    ]);
+
+    // Command Configuration
+    let mut command_help = String::from("==== \"Simple\" Web Browser! ====\n====  Available Commands:  ====\n");
+    for (c_command, c_args) in &commands {
+        command_help.push_str(format!("    {} {}\n        {}\n\n", c_command, c_args[0], c_args[1]).as_str());
+    }
+    command_help.push_str("INFO: URI and PORT defaults to 'localhost' and '80' respectively.\n");
+
     let (mut url, mut port, mut urn);
     let mut auth = String::new();
 
     // User Interface -- Native CLI
-    println!("==== \"Simple\" Web Browser! ====");
-    println!("====  Available Commands:  ====");
-    print!("{COMMANDS}");
+    println!("{command_help}");
 
     let mut command_line = String::new();
     loop {
         // Command Line Input & Processing
         print!("> ");
-        match io::stdin().read_line(&mut command_line) {
-            Err(e) => { println!("error: {e}"); },
-            _ => {}
-        }
-        if command_line.starts_with("http://") { command_line = command_line["http://".len()..].to_string(); }
+        stdout().flush().unwrap();
+
+        if let Err(e) = io::stdin().read_line(&mut command_line) { println!("ERROR: {e}"); }
+        println!();
 
         let (command, args): (String, Vec<Vec<String>>) = command_line
             .trim()
             .split_once(' ')
             .map(|t| (String::from(t.0), t.1
+                      .trim_start_matches("http://")
                       .splitn(2, '/')
                       .map(|s1| String::from(s1)
                            .split(':')
-                           .map(|s2| String::from(s2))
+                           .map(String::from)
                            .collect())
                       .collect()))
-            .unwrap_or((command_line.split(' ').next().unwrap().trim_end().to_string(), vec![]));
+            .unwrap_or((command_line
+                        .split(' ')
+                        .next()
+                        .unwrap()
+                        .trim_end()
+                        .to_string(), vec![]));
 
         if !command.is_empty() {
-            println!("{command_line}");
-            if command == "open" {
+            if command == "open" || command == "download" {
+                let mut sp = Spinner::new(Spinners::Aesthetic, "Please wait for a bit...".into());
+
                 url = args.get(0).cloned().unwrap_or(vec![String::from("localhost")]).get(0).cloned().unwrap();
-                port = args.get(0).cloned().unwrap_or(vec![String::new(), String::from("3000")]).get(1).cloned().unwrap_or(String::from("3000"));
+                port = args.get(0).cloned().unwrap_or(vec![String::new(), String::from("80")]).get(1).cloned().unwrap_or(String::from("80"));
                 urn = args.get(1).cloned().unwrap_or(vec![String::from("")]).get(0).cloned().unwrap_or(String::from(""));
 
                 // Request Handling
@@ -95,6 +119,8 @@ fn main() -> IoResult<()> {
 
                     // Body (might only deal with HTML for now)
                     body.append(&mut http_response[byte_counter..http_response.len()].to_owned());
+                    
+                    sp.stop_and_persist("✔", "Finished loading web page!".into());
 
                     // Response Processing
                     // >> Status Line
@@ -103,9 +129,6 @@ fn main() -> IoResult<()> {
                         .map(|s| String::from(s.trim_end()))
                         .collect();
 
-                    println!("Status Line: {:?}", proc_status_line);
-                    println!();
-                    
                     // >> Header
                     let mut proc_header: HashMap<String, Vec<Vec<_>>> = HashMap::new();
                     for line in header.lines() {
@@ -119,20 +142,15 @@ fn main() -> IoResult<()> {
                                 .split(';')
                                 .map(|s1| String::from(s1.trim())
                                     .split('=')
-                                    .map(|s2| String::from(s2))
+                                    .map(String::from)
                                     .collect())
                                 .collect()
                             );
                     }
 
-                    println!("Header: {:?}", proc_header);
-                    println!();
-
                     // >> Body
                     let proc_body = if body.ends_with(b"\n") { &body[..body.len() - 1] }
                     else { &body };
-
-                    println!("Body:\n{}", String::from_utf8_lossy(proc_body));
 
                     // Response Handling
                     // >> Non 2XX Response Code Handling
@@ -141,25 +159,21 @@ fn main() -> IoResult<()> {
                         println!();
                         println!("NOTICE: Authorization is Needed, please enter your username and password below, separated by a space");
                         println!("(you may ENTER if you don't wish to input your credentials.):");
-                        match io::stdin().read_line(&mut auth) {
-                            Err(e) => { println!("error: {e}"); },
-                            _ => {}
-                        }
+
+                        if let Err(e) = io::stdin().read_line(&mut auth) { println!("ERROR: {e}"); }
 
                         if auth == "\n" { break; }
                         auth = String::from("\r\nAuthorization: ") +
-                            &proc_header.get(&String::from("WWW-Authenticate"))
+                            proc_header.get(&String::from("WWW-Authenticate"))
                                 .unwrap().get(0).unwrap().get(0).unwrap()
                                 .split(' ').next().unwrap() +
                             " " +
-                            &general_purpose::STANDARD.encode(auth.replace(" ", ":").trim_end().as_bytes());
+                            &general_purpose::STANDARD.encode(auth.replace(' ', ":").trim_end().as_bytes());
                         continue;
                     }
                     else if response_code >= 400 {
                         println!();
-                        println!("!!!!!!!!");
                         println!("ERROR: {response_code} {message}");
-                        println!("!!!!!!!!");
                         println!();
 
                         break;
@@ -172,25 +186,43 @@ fn main() -> IoResult<()> {
                             .get(1).cloned().unwrap()
                             .get(1).cloned().unwrap()
                             .clone();
-                        urn = urn.splitn(4, '/').skip(3).next().unwrap().to_string();
+                        urn = urn.splitn(4, '/').nth(3).unwrap().to_string();
 
                         println!();
-                        println!("!!!!!!!!");
                         println!("NOTICE: Redirecting to {urn}");
-                        println!("!!!!!!!!");
                         println!();
 
                         continue;
                     }
 
-                    // >> File Downloads
-                    if proc_header.get(&String::from("Content-Type")).is_some() {
-                        let filename = proc_header.get(&String::from("Content-Disposition")).unwrap_or(&vec![vec![]])
-                        .get(1).unwrap_or(&vec![]).get(1).unwrap_or(&String::from("unnamed")).trim_matches('\"').to_string();
+                    let mime_type = proc_header
+                        .get(&String::from("Content-Type")).unwrap()
+                        .get(0).unwrap()
+                        .get(0).unwrap();
 
-                        let filetype = proc_header.get(&String::from("Content-Type")).unwrap()
-                            .get(0).unwrap().get(0).unwrap();
-                        if SUPPORTED_FILE_TYPES.iter().any(|s| s == filetype) {
+                    if command == "download" {
+                        // >> File Downloads
+                        let unnamed_counts = fs::read_dir("./downloads")?
+                            .map(|res| res.expect("ERROR: failed reading from downloads").file_name().into_string().unwrap())
+                            .collect::<Vec<String>>();
+                        let unnamed_counts = unnamed_counts
+                            .iter()
+                            .filter(|s| s.starts_with("unnamed_"))
+                            .map(|s| s.split(|c| c == '_' || c == '.').nth(1).unwrap().parse::<isize>().expect("ERROR: wrong format for unnamed file"))
+                            .max().unwrap_or(-1) + 1;
+
+                        let filename = if proc_header.contains_key(&String::from("Content-Disposition")) {
+                            proc_header
+                                .get(&String::from("Content-Disposition")).unwrap()
+                                .get(1).unwrap()
+                                .get(1).unwrap()
+                                .trim_matches('\"')
+                                .to_string()
+                        } else {
+                            format!("unnamed_{}.{}", unnamed_counts, supported_download_file_types.get(mime_type.as_str()).unwrap())
+                        };
+
+                        if supported_download_file_types.keys().any(|s| s == mime_type) {
                             let downloaded_file_path = String::from("./downloads");
                             DirBuilder::new()
                                 .recursive(true)
@@ -201,26 +233,32 @@ fn main() -> IoResult<()> {
                             f.write_all(proc_body)?;
 
                             println!();
-                            println!("!!!!!!!!");
                             println!("NOTICE: Finished downloading {} with the size of {}", filename, proc_body.len());
-                            println!("!!!!!!!!");
                             println!();
-
-                            break;
                         }
+                    } else {
+                        println!("Status Line: {:?}", proc_status_line);
+                        println!();
+
+                        println!("Header: {:?}", proc_header);
+                        println!();
+                    
+                        println!("Body:\n{}", String::from_utf8_lossy(proc_body));
+
+                        // TODO: HTML Parsing and Simple Display
+                        if mime_type == "text/html" {
+                            todo!();
+                        }
+
+                        println!();
+                        println!("NOTICE: Finished reading {url}:{port}/{urn}");
+                        println!();
                     }
-
-                    // TODO: HTML Parsing and Simple Display
-
-                    println!();
-                    println!("!!!!!!!!");
-                    println!("NOTICE: Finished reading {url}:{port}/{urn}");
-                    println!("!!!!!!!!");
-                    println!();
 
                     break;
                 }
-
+            } else if command == "help" {
+                println!("{command_help}");
             } else if command == "quit" {
                 break;
             } else {

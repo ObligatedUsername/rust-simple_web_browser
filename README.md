@@ -4,7 +4,7 @@
 A very simple (& slow) TcpStream-based HTTP-only CLI browser.
 
 ## A few details...
-URI defaults to **localhost:3000/**
+URI defaults to **localhost:80/**
 
 ### Features
 - [x] open a web page given a URI and shows the text
@@ -19,8 +19,10 @@ URI defaults to **localhost:3000/**
 ### Additional Features
 - [x] basic Terminal UI
 - [x] basic command system
+- [x] comprehensive UI menu
+- [x] incremental auto-naming for nameless files
+- [x] loading indicator
 
 ### Planned Additional Features
-- [ ] loading indicator
 - [ ] download progress bar
 - [ ] a much more interactive TUI

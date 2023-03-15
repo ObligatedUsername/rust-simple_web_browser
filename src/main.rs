@@ -29,7 +29,7 @@ fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 }
 
 // recursive_elem_print
-// Recursively does indented prints of elements from top to bottom
+// Recursively does indented & formatted prints of elements from top to bottom
 // Notes for certain elements:
 // ---- only lists are indented, everything else follows their current depth,
 // ---- TODO: open links
@@ -88,9 +88,66 @@ fn main() -> IoResult<()> {
     ]);
     // supported_download_file_types -> <mime_type, MIME type>
     let supported_download_file_types: HashMap<&str, &str> = HashMap::from([
+        // Text-only types
         ("text/plain", "txt"),
+        ("text/csv", "csv"),
+        ("text/css", "css"),
         ("text/html", "html"),
+        ("text/javascript", "js"),
+        // Default binary type
+        ("application/octet-stream", "bin"),
+        // Image types
+        ("image/apng", "apng"),
+        ("image/png", "png"),
+        ("image/avif", "avif"),
+        ("image/gif", "gif"),
+        ("image/jpeg", "jpg"),
+        ("image/svg+xml", "svg"),
+        ("image/webp", "webp"),
+        ("image/bmp", "bmp"),
+        ("image/tiff", "tiff"),
+        ("image/vnd.microsoft.icon", "ico"),
+        // Audio types
+        ("audio/wav", "wav"),
+        ("audio/webm", "webm"),
+        ("audio/ogg", "ogg"),
+        ("audio/aac", "aac"),
+        ("audio/wav", "wav"),
+        ("audio/mpeg", "mp3"),
+        ("audio/mp4", "m4a"),
+        ("audio/opus", "opus"),
+        ("audio/midi", "midi"),
+        // Video types
+        ("video/webm", "webm"),
+        ("video/ogg", "ogg"),
+        ("video/mp4", "mp4"),
+        ("video/mpeg", "mpeg"),
+        // Font types
+        ("font/otf", "otf"),
+        ("font/ttf", "ttf"),
+        ("font/woff", "woff"),
+        ("font/woff2", "woff2"),
+        // Application types
         ("application/pdf", "pdf"),
+        ("application/ogg", "ogg"),
+        ("application/vnd.rar", "rar"),
+        ("application/zip", "zip"),
+        ("application/x-7z-compressed", "7z"),
+        ("application/x-bzip", "bz"),
+        ("application/x-bzip2", "bz2"),
+        ("application/gzip", "gz"),
+        ("application/x-tar", "tar"),
+        ("application/json", "json"),
+        ("application/x-httpd-php", "php"),
+        ("application/x-sh", "sh"),
+        ("application/xhtml+xml", "xhtml"),
+        ("application/xml", "xml"),
+        ("application/msword", "doc"),
+        ("application/vnd.openxmlformats-officedocument.wordprocessingml.document", "docx"),
+        ("application/vnd.ms-powerpoint", "ppt"),
+        ("application/vnd.openxmlformats-officedocument.presentationml.presentation", "pptx"),
+        ("application/vnd.ms-excel", "xls"),
+        ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "xlsx")
     ]);
 
     // Command Configuration
@@ -274,7 +331,10 @@ fn main() -> IoResult<()> {
                                 .trim_matches('\"')
                                 .to_string()
                         } else {
-                            format!("unnamed_{}.{}", unnamed_counts, supported_download_file_types.get(mime_type.as_str()).unwrap())
+                            format!("unnamed_{}{}",
+                                    unnamed_counts,
+                                    supported_download_file_types
+                                    .get(mime_type.as_str()).unwrap())
                         };
 
                         if supported_download_file_types.keys().any(|s| s == mime_type) {
@@ -307,8 +367,8 @@ fn main() -> IoResult<()> {
                         // println!("Body:\n{}", String::from_utf8_lossy(proc_body));
 
                         // HTML Parsing and Simple Display
-                        // WARNING: Uses a non-production implementation of DOM,
-                        //          so.. TODO: Implement a DOM, good luck
+                        // WARNING: Uses a non-production html parsing library, not sure by how much
+                        //          it affects performance so far.
                         if mime_type == "text/html" {
                             let dom = Dom::parse(&String::from_utf8_lossy(proc_body)).unwrap();
                             let html = &dom.children

@@ -1,7 +1,7 @@
 # "Simple" Web Browser (in Rust)
 
 ## Description
-A very simple (& slow) TcpStream-based HTTP-only CLI browser.
+A very simple (& slow?) TcpStream-based HTTP-only CLI browser.
 
 ## A few details...
 URI defaults to **localhost:80/**

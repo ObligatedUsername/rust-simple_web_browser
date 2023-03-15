@@ -8,7 +8,7 @@ URI defaults to **localhost:80/**
 
 ### Features
 - [x] open a web page given a URI and shows the text
-- [ ] show a list of clickable links
+- [/] show a list of clickable links (currently shows lists, but links aren't clickable yet)
 - [x] download a file regardless of its size
 - [ ] download a file in parallel (OPTIONAL)
 - [x] follow redirections
@@ -17,11 +17,14 @@ URI defaults to **localhost:80/**
 - [ ] can access a web page that is protected behind a login page
 
 ### Additional Features
+#### User Interface
 - [x] basic Terminal UI
 - [x] basic command system
 - [x] comprehensive UI menu
-- [x] incremental auto-naming for nameless files
 - [x] loading indicator
+
+#### Quality Of Life
+- [x] incremental auto-naming for nameless files
 
 ### Planned Additional Features
 - [ ] download progress bar

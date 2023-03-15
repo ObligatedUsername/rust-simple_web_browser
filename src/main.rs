@@ -286,8 +286,15 @@ fn main() -> IoResult<()> {
                             let mut f = File::create(format!("{download_file_path}/{filename}"))?;
                             f.write_all(proc_body)?;
 
+                            let (size, metric) = match proc_body.len() {
+                                0 ..= 1_023 => (proc_body.len() as f64, "Bytes"),
+                                1_024 ..= 1_048_575 => (proc_body.len() as f64/1_024_f64, "KiB"),
+                                1_048_576 ..= 1_073_741_823 => (proc_body.len() as f64/1_048_576_f64, "MiB"),
+                                _ => (proc_body.len() as f64/1_073_741_823_f64, "GiB")
+                            };
+
                             println!();
-                            println!("NOTICE: Finished downloading {} with the size of {}", filename, proc_body.len());
+                            println!("NOTICE: Finished downloading {} with the size of {:.1} {}", filename, size, metric);
                             println!();
                         }
                     } else {

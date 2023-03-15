@@ -22,6 +22,7 @@ URI defaults to **localhost:80/**
 - [x] basic command system
 - [x] comprehensive UI menu
 - [x] loading indicator
+- [x] metric for file size
 
 #### Quality Of Life
 - [x] incremental auto-naming for nameless files

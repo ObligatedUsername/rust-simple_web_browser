@@ -1,3 +1,7 @@
+extern crate base64;
+extern crate spinners;
+extern crate html_parser;
+
 use std::{
     io::{self, stdout, prelude::*, BufReader, Result as IoResult},
     net::TcpStream,
@@ -8,13 +12,60 @@ use base64::{
     Engine as _,
     engine::general_purpose
 };
-use spinners::{Spinner, Spinners};
+use spinners::{
+    Spinner,
+    Spinners
+};
+use html_parser::{
+    Dom,
+    Element as RealElement,
+    Node::*
+};
 
 // find_subsequence by Francis Gagné on StackOverflow
+// Find the starting index of the byte subset "needle" in "haystack"
 fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|window| window == needle)
 }
 
+// recursive_elem_print
+// Recursively does indented prints of elements from top to bottom
+// Notes for certain elements:
+// ---- only lists are indented, everything else follows their current depth,
+// ---- TODO: open links
+fn recursive_elem_print(curr_elem: &RealElement, indent: &str, indent_depth: usize, extras: &str) {
+    if !curr_elem.children.is_empty() {
+        for child_elem in curr_elem.children.iter() {
+            match child_elem {
+                Element(elem) => match elem.name.as_str() {
+                    "ol" | "ul" => { recursive_elem_print(
+                            elem,
+                            indent,
+                            indent_depth + 1,
+                            extras);
+                    },
+                    "a" => { recursive_elem_print(
+                            elem,
+                            indent,
+                            indent_depth,
+                            format!(" -> {}", elem.attributes.get(&String::from("href")).cloned().unwrap().unwrap())
+                            .as_str());
+                    },
+                    _ => { recursive_elem_print(
+                            elem,
+                            indent,
+                            indent_depth,
+                            extras);
+                    }
+                },
+                Text(text) => { println!("{}{}{}", indent.repeat(indent_depth), text, extras); },
+                Comment(_) => {}
+            }
+        }
+    }
+}
+
+// read_n by Shepmaster on StackOverflow
 // Read N amount of bytes from reader
 // fn read_n<R>(reader: R, bytes_to_read: u64) -> Vec<u8>
 // where
@@ -25,7 +76,7 @@ fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 //     buf
 // }
 
-// const PACKET_MAX_BYTES: usize = 512;
+// const PACKET_MAX_BYTES: usize = 4096;
 
 fn main() -> IoResult<()> {
     // commands -> <command, arguments>
@@ -47,7 +98,7 @@ fn main() -> IoResult<()> {
     for (c_command, c_args) in &commands {
         command_help.push_str(format!("    {} {}\n        {}\n\n", c_command, c_args[0], c_args[1]).as_str());
     }
-    command_help.push_str("INFO: URI and PORT defaults to 'localhost' and '80' respectively.\n");
+    command_help.push_str("INFO: URL and PORT defaults to 'localhost' and '80' respectively.\n");
 
     let (mut url, mut port, mut urn);
     let mut auth = String::new();
@@ -83,17 +134,17 @@ fn main() -> IoResult<()> {
                         .to_string(), vec![]));
 
         if !command.is_empty() {
-            if command == "open" || command == "download" {
-                let mut sp = Spinner::new(Spinners::Aesthetic, "Please wait for a bit...".into());
-
+            if ["open", "download"].contains(&command.as_str()) {
                 url = args.get(0).cloned().unwrap_or(vec![String::from("localhost")]).get(0).cloned().unwrap();
                 port = args.get(0).cloned().unwrap_or(vec![String::new(), String::from("80")]).get(1).cloned().unwrap_or(String::from("80"));
                 urn = args.get(1).cloned().unwrap_or(vec![String::from("")]).get(0).cloned().unwrap_or(String::from(""));
 
                 // Request Handling
                 loop {
+                    let mut sp = Spinner::new(Spinners::Aesthetic, "Please wait for a bit...".into());
+
                     let mut stream = TcpStream::connect(format!("{url}:{port}"))?;
-                    let request = format!("GET /{urn} HTTP/1.1\r\nHost: {url}{auth}\r\n\r\n");
+                    let request = format!("GET /{urn} HTTP/1.0\r\nHost: {url}{auth}\r\n\r\n");
                     
                     auth = String::new();
 
@@ -162,6 +213,8 @@ fn main() -> IoResult<()> {
 
                         if let Err(e) = io::stdin().read_line(&mut auth) { println!("ERROR: {e}"); }
 
+                        // TODO: clean up auth if the user inputs a new line, and
+                        //       handle invalid auth
                         if auth == "\n" { break; }
                         auth = String::from("\r\nAuthorization: ") +
                             proc_header.get(&String::from("WWW-Authenticate"))
@@ -202,13 +255,15 @@ fn main() -> IoResult<()> {
 
                     if command == "download" {
                         // >> File Downloads
-                        let unnamed_counts = fs::read_dir("./downloads")?
+                        let download_file_path = "./downloads";
+
+                        let unnamed_counts = fs::read_dir(download_file_path)?
                             .map(|res| res.expect("ERROR: failed reading from downloads").file_name().into_string().unwrap())
                             .collect::<Vec<String>>();
                         let unnamed_counts = unnamed_counts
                             .iter()
                             .filter(|s| s.starts_with("unnamed_"))
-                            .map(|s| s.split(|c| c == '_' || c == '.').nth(1).unwrap().parse::<isize>().expect("ERROR: wrong format for unnamed file"))
+                            .map(|s| s.split(&['_', '.'][..]).nth(1).unwrap().parse::<isize>().expect("ERROR: wrong format for unnamed file"))
                             .max().unwrap_or(-1) + 1;
 
                         let filename = if proc_header.contains_key(&String::from("Content-Disposition")) {
@@ -223,13 +278,12 @@ fn main() -> IoResult<()> {
                         };
 
                         if supported_download_file_types.keys().any(|s| s == mime_type) {
-                            let downloaded_file_path = String::from("./downloads");
                             DirBuilder::new()
                                 .recursive(true)
-                                .create(downloaded_file_path.clone())
+                                .create(download_file_path)
                                 .unwrap();
 
-                            let mut f = File::create(downloaded_file_path + "/" + &filename)?;
+                            let mut f = File::create(format!("{download_file_path}/{filename}"))?;
                             f.write_all(proc_body)?;
 
                             println!();
@@ -237,17 +291,30 @@ fn main() -> IoResult<()> {
                             println!();
                         }
                     } else {
-                        println!("Status Line: {:?}", proc_status_line);
-                        println!();
+                        // println!("Status Line: {:?}", proc_status_line);
+                        // println!();
 
-                        println!("Header: {:?}", proc_header);
-                        println!();
+                        // println!("Header: {:?}", proc_header);
+                        // println!();
                     
-                        println!("Body:\n{}", String::from_utf8_lossy(proc_body));
+                        // println!("Body:\n{}", String::from_utf8_lossy(proc_body));
 
-                        // TODO: HTML Parsing and Simple Display
+                        // HTML Parsing and Simple Display
+                        // WARNING: Uses a non-production implementation of DOM,
+                        //          so.. TODO: Implement a DOM, good luck
                         if mime_type == "text/html" {
-                            todo!();
+                            let dom = Dom::parse(&String::from_utf8_lossy(proc_body)).unwrap();
+                            let html = &dom.children
+                                .iter().last().unwrap()
+                                .element().unwrap()
+                                .children;
+                            let (head, body): (RealElement, RealElement) = (html[0].element().unwrap().clone(), html[1].element().unwrap().clone());
+                            let title = head
+                                .children.iter().find(|e| matches!(e.element(), Some(elem) if elem.name == "title"))
+                                .unwrap().element().unwrap()
+                                .children[0].text().unwrap();
+                            println!("Title: {}\n", title);
+                            recursive_elem_print(&body, "  ", 0, "");
                         }
 
                         println!();

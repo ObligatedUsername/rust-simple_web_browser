@@ -23,10 +23,10 @@ URI defaults to **localhost:80/**
 - [x] comprehensive UI menu
 - [x] loading indicator
 - [x] metric for file size
+- [x] a much more interactive TUI (currently using ncurses-rs)
 
 #### Quality Of Life
 - [x] incremental auto-naming for nameless files
 
 ### Planned Additional Features
 - [ ] download progress bar
-- [ ] a much more interactive TUI

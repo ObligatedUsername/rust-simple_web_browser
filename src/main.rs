@@ -1,15 +1,14 @@
-extern crate base64;
-extern crate html_parser;
-extern crate spinners;
-
+use ncurses::*;
 use base64::{engine::general_purpose, Engine as _};
 use html_parser::{Dom, Element as RealElement, Node::*};
-use spinners::{Spinner, Spinners};
 use std::{
     collections::HashMap,
     fs::{self, DirBuilder, File},
-    io::{self, prelude::*, stdout, BufReader, Result as IoResult},
+    io::{prelude::*, BufReader, Result as IoResult},
     net::TcpStream,
+    thread,
+    time::Duration,
+    sync::mpsc,
 };
 
 // find_subsequence by Francis Gagné on StackOverflow
@@ -20,21 +19,22 @@ fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         .position(|window| window == needle)
 }
 
-// recursive_elem_print
-// Recursively does indented & formatted prints of elements from top to bottom
+// recursive_elem_vec_fill
+// Recursively fill a vector with formatted string of elements from top to bottom
 // Notes for certain elements:
 // ---- only lists are indented, everything else follows their current depth,
-// ---- TODO: open links
-fn recursive_elem_print(curr_elem: &RealElement, indent: &str, indent_depth: usize, extras: &str) {
+// ---- TODO: open links (handle this somewhere)
+fn recursive_elem_vec_fill(curr_elem: &RealElement, indent: &str, indent_depth: usize, extras: &str) -> Vec<String> {
+    let mut elem_vec: Vec<String> = vec![];
     if !curr_elem.children.is_empty() {
         for child_elem in curr_elem.children.iter() {
             match child_elem {
                 Element(elem) => match elem.name.as_str() {
                     "ol" | "ul" => {
-                        recursive_elem_print(elem, indent, indent_depth + 1, extras);
+                        elem_vec.append(&mut recursive_elem_vec_fill(elem, indent, indent_depth + 1, extras));
                     }
                     "a" => {
-                        recursive_elem_print(
+                        elem_vec.append(&mut recursive_elem_vec_fill(
                             elem,
                             indent,
                             indent_depth,
@@ -47,20 +47,21 @@ fn recursive_elem_print(curr_elem: &RealElement, indent: &str, indent_depth: usi
                                     .unwrap()
                             )
                             .as_str(),
-                        );
+                        ));
                     }
                     "script" => {}
                     _ => {
-                        recursive_elem_print(elem, indent, indent_depth, extras);
+                        elem_vec.append(&mut recursive_elem_vec_fill(elem, indent, indent_depth, extras));
                     }
                 },
                 Text(text) => {
-                    println!("{}{}{}", indent.repeat(indent_depth), text, extras);
+                    elem_vec.push(format!("{}{}{}", indent.repeat(indent_depth), text, extras));
                 }
                 Comment(_) => {}
             }
         }
     }
+    elem_vec
 }
 
 // read_n by Shepmaster on StackOverflow
@@ -81,7 +82,6 @@ fn main() -> IoResult<()> {
     let commands: HashMap<&str, [&str; 2]> = HashMap::from([
         ("open", ["[URI]:[PORT]/[URN]", "\"Opens a web page from the given URL.\""]),
         ("download", ["[URI]:[PORT]/[URN]", "\"Downloads file from the given URL. (Supported file types so far are: html, txt, pdf)\""]),
-        ("help", ["", "\"Shows this message.\""]),
         ("quit", ["", "\"Exit from this program.\""]),
     ]);
     // supported_download_file_types -> <mime_type, MIME type>
@@ -165,27 +165,73 @@ fn main() -> IoResult<()> {
             format!("    {} {}\n        {}\n\n", c_command, c_args[0], c_args[1]).as_str(),
         );
     }
-    command_help.push_str("INFO: URL and PORT defaults to 'localhost' and '80' respectively.\n");
+    command_help.push_str("FYI, URL and PORT defaults to 'localhost' and '80' respectively.\nPress tab to switch between web page and command line view.\n");
 
     let (mut url, mut port, mut urn);
     let mut auth = String::new();
 
-    // User Interface -- Native CLI
-    println!("{command_help}");
+    // User Interface -- ncurses
+    let screen = initscr();
+    noecho();
+    curs_set(CURSOR_VISIBILITY::CURSOR_INVISIBLE);
 
+    // Web Page and View
+    let mut page_view = false;
+    let mut elem_vec: Vec<String> = vec![];
+
+    // Fetch and Download Web Pages and Files
+    addstr(&command_help);
+
+    addstr("> ");
+    let cmd_line_curr_y = getcury(screen);
+    
     let mut command_line = String::new();
     loop {
-        // Command Line Input & Processing
-        print!("> ");
-        stdout().flush().unwrap();
+        refresh();
 
-        if let Err(e) = io::stdin().read_line(&mut command_line) {
-            println!("ERROR: {e}");
+        loop {
+            let ch = getch();
+
+            match ch as u8 {
+                10 if !page_view => {
+                    break;
+                },
+                9 => {
+                    page_view = !page_view;
+                    if page_view {
+                        erase();
+                        if elem_vec.is_empty() { addstr("You haven't loaded any site.\nLoad a website through the command line!"); }
+                        else {
+                            for elem in &elem_vec {
+                                addstr(format!("{elem}\n").as_str());
+                            }
+                        }
+                    }
+                    else {
+                        erase();
+                        addstr(&command_help);
+                        addstr("> ");
+                        addstr(&command_line);
+                    }
+                    refresh();
+                },
+                127 if !page_view => {
+                    if getcurx(screen) < 3 { continue; }
+                    mvdelch(getcury(screen), getcurx(screen)-1);
+                    command_line.pop();
+                },
+                _ => {
+                    if page_view { continue; }
+                    addch(ch as u32);
+                    command_line.push_str(&(ch as u8 as char).to_string());
+                }
+            }
         }
-        println!();
+        
+        // Clear feedback from previous input
+        clrtobot();
 
         let (command, args): (String, Vec<Vec<String>>) = command_line
-            .trim()
             .split_once(' ')
             .map(|t| {
                 (
@@ -226,8 +272,43 @@ fn main() -> IoResult<()> {
 
                 // Request Handling
                 loop {
-                    let mut sp =
-                        Spinner::new(Spinners::Aesthetic, "Please wait for a bit...".into());
+                    // Loading indicator starts here
+                    let (tx, rx) = mpsc::channel::<Option<&str>>();
+
+                    mv(cmd_line_curr_y + 4, 0);
+                    addstr("Loading");
+                    refresh();
+                    let cmd_line_curr_x = getcurx(screen);
+                    thread::spawn(move || 'loading: loop {
+                        for step in 0..=3 {
+                            thread::sleep(Duration::from_secs_f64(0.25));
+                            let (stop, stop_message) = match rx.try_recv() {
+                                Ok(stop_message) => (true, stop_message),
+                                Err(mpsc::TryRecvError::Disconnected) => (true, None),
+                                Err(mpsc::TryRecvError::Empty) => (false, None),
+                            };
+
+                            if step == 3 {
+                                mv(cmd_line_curr_y + 4, cmd_line_curr_x);
+                                clrtoeol();
+                            } else {
+                                addstr(match stop_message {
+                                    Some(message) => {
+                                        mv(cmd_line_curr_y + 4, 0);
+                                        clrtoeol();
+                                        message
+                                    },
+                                    None => "."
+                                });
+                            }
+                            refresh();
+
+                            if stop {
+                                mv(cmd_line_curr_y , 2);
+                                break 'loading;
+                            }
+                        }
+                    });
 
                     let mut stream = TcpStream::connect(format!("{url}:{port}"))?;
                     let request = format!("GET /{urn} HTTP/1.0\r\nHost: {url}{auth}\r\n\r\n");
@@ -263,7 +344,8 @@ fn main() -> IoResult<()> {
                     // Body (might only deal with HTML for now)
                     body.append(&mut http_response[byte_counter..http_response.len()].to_owned());
 
-                    sp.stop_and_persist("✔", "Finished loading web page!".into());
+                    // Stop loading indicator here
+                    tx.send(Some("Loading finished!")).unwrap();
 
                     // Response Processing
                     // >> Status Line
@@ -309,17 +391,35 @@ fn main() -> IoResult<()> {
                     );
                     if response_code == 401 {
                         // HTTP Basic Auth
-                        println!();
-                        println!("NOTICE: Authorization is Needed, please enter your username and password below, separated by a space");
-                        println!("(you may ENTER if you don't wish to input your credentials.):");
+                        mv(cmd_line_curr_y + 2, 0);
+                        addstr("STATUS: Authorization is needed, please enter your username and password, separated by a space\n(you may ENTER if you don't wish to input your credentials.):");
+                        mv(cmd_line_curr_y, 2);
+                        clrtoeol();
 
-                        if let Err(e) = io::stdin().read_line(&mut auth) {
-                            println!("ERROR: {e}");
+                        loop {
+                            let ch = getch();
+
+                            match ch as u8 {
+                                10 => {
+                                    break;
+                                },
+                                9 => {},
+                                127 => {
+                                    if getcurx(screen) < 3 { continue; }
+                                    mvdelch(cmd_line_curr_y, getcurx(screen)-1);
+                                    auth.pop();
+                                },
+                                _ => {
+                                    addch(ch as u32);
+                                    auth.push_str(&(ch as u8 as char).to_string());
+                                }
+                            }
                         }
+                        mvdelch(cmd_line_curr_y, 2);
+                        clrtobot();
 
-                        // TODO: clean up auth if the user inputs a new line, and
-                        //       handle invalid auth
-                        if auth == "\n" {
+                        if !auth.contains(' ') {
+                            auth = String::new();
                             break;
                         }
                         auth = String::from("\r\nAuthorization: ")
@@ -332,9 +432,10 @@ fn main() -> IoResult<()> {
                                 .encode(auth.replace(' ', ":").trim_end().as_bytes());
                         continue;
                     } else if response_code >= 400 {
-                        println!();
-                        println!("ERROR: {response_code} {message}");
-                        println!();
+                        mv(cmd_line_curr_y + 2, 0);
+                        addstr(format!("ERROR: {response_code} {message}").as_str());
+                        mv(cmd_line_curr_y, 2);
+                        clrtoeol();
 
                         break;
                     }
@@ -351,14 +452,15 @@ fn main() -> IoResult<()> {
                             .unwrap()
                             .to_string();
 
-                        println!();
-                        println!("NOTICE: Redirecting to {urn}");
-                        println!();
+                        mv(cmd_line_curr_y + 2, 0);
+                        addstr(format!("STATUS: Redirecting to {urn}").as_str());
+                        mv(cmd_line_curr_y, 2);
+                        clrtoeol();
 
                         continue;
                     }
 
-                    let mime_type = &proc_header.get(&String::from("Content-Type")).unwrap()[0][0];
+                    let mime_type = &proc_header.get(&String::from("Content-Type")).expect("ERROR: Content type is not found")[0][0];
 
                     if command == "download" {
                         // >> File Downloads
@@ -429,14 +531,17 @@ fn main() -> IoResult<()> {
                                 _ => (content_length as f64 / 1_000_000_000_f64, "GB"),
                             };
 
-                            println!();
-                            println!(
-                                "NOTICE: Finished downloading {} with the size of {:.1} {}",
-                                filename, size, metric
-                            );
-                            println!();
+                            mv(cmd_line_curr_y + 2, 0);
+                            addstr(format!(
+                                    "STATUS: Finished downloading {} with the size of {:.1} {}",
+                                filename, size, metric)
+                                .as_str());
+                            mv(cmd_line_curr_y, 2);
+                            clrtoeol();
                         }
                     } else {
+                        // Clear saved previous web page
+                        elem_vec = vec![];
                         // println!("Status Line: {:?}", proc_status_line);
                         // println!();
 
@@ -472,29 +577,37 @@ fn main() -> IoResult<()> {
                                 .children[0]
                                 .text()
                                 .unwrap();
-                            println!("Title: {}\n", title);
-                            recursive_elem_print(&body, "  ", 0, "");
+
+                            elem_vec.push(format!("Title: {}\n", title));
+                            elem_vec.append(&mut recursive_elem_vec_fill(&body, "  ", 0, ""));
                         }
 
-                        println!();
-                        println!("NOTICE: Finished reading {url}:{port}/{urn}");
-                        println!();
+                        mv(cmd_line_curr_y + 2, 0);
+                        addstr(&format!("STATUS: Finished reading {url}:{port}/{urn}"));
+                        mv(cmd_line_curr_y, 2);
+                        clrtoeol();
                     }
 
                     break;
                 }
-            } else if command == "help" {
-                println!("{command_help}");
             } else if command == "quit" {
                 break;
             } else {
-                println!("ERROR: Command '{command}' not recognized");
+                mv(cmd_line_curr_y + 2, 0);
+                addstr(&format!("ERROR: Command '{command}' not recognized"));
+                mv(cmd_line_curr_y, 2);
+                clrtoeol();
             }
         } else {
-            println!("ERROR: Please enter something");
+            mv(cmd_line_curr_y + 2, 0);
+            addstr("ERROR: Please enter something");
+            mv(cmd_line_curr_y, 2);
+            clrtoeol();
         }
         command_line = String::new();
     }
+    
+    endwin();
 
     Ok(())
 }

@@ -89,7 +89,7 @@ fn recursive_elem_vec_fill(curr_elem: &RealElement, indent: &str, indent_depth: 
 
 fn main() -> IoResult<()> {
     // commands -> <command, arguments>
-    let commands: HashMap<&str, [&str; 2]> = HashMap::from([
+    let commands: Vec<(&str, [&str; 2])> = Vec::from([
         ("open", ["[URI]:[PORT]/[URN]", "\"Opens a web page from the given URL.\""]),
         ("download", ["[URI]:[PORT]/[URN]", "\"Downloads file from the given URL. (Supported file types so far are: html, txt, pdf)\""]),
         ("quit", ["", "\"Exit from this program.\""]),

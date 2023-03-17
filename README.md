@@ -8,7 +8,7 @@ URI defaults to **localhost:80/**
 
 ### Features
 - [x] open a web page given a URI and shows the text
-- [/] show a list of clickable links (currently shows lists, but links aren't clickable yet)
+- [x] show a list of clickable links (uses keyboard, not that far off)
 - [x] download a file regardless of its size
 - [ ] download a file in parallel (OPTIONAL)
 - [x] follow redirections
@@ -30,3 +30,4 @@ URI defaults to **localhost:80/**
 
 ### Planned Additional Features
 - [ ] download progress bar
+- [ ] split panel layout between command line, help menu, and logs

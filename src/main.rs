@@ -23,8 +23,7 @@ fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 // Recursively fill a vector with formatted string of elements from top to bottom
 // Notes for certain elements:
 // ---- only lists are indented, everything else follows their current depth,
-// ---- TODO: open links (Setup a better data structure for these elements) (just use a huge
-//            string)
+// ---- considering adding div, section, and more to come, need more research on these layout tags
 fn recursive_elem_vec_fill(curr_elem: &RealElement, indent: &str, indent_depth: usize, extras: &str)
     -> Vec<String> {
     let mut elem_vec: Vec<String> = vec![];
@@ -33,35 +32,32 @@ fn recursive_elem_vec_fill(curr_elem: &RealElement, indent: &str, indent_depth: 
             match child_elem {
                 Element(elem) => match elem.name.as_str() {
                     "ol" | "ul" => {
-                        elem_vec.append(&mut recursive_elem_vec_fill(elem, indent, indent_depth + 1, format!("{}|{}",
+                        elem_vec.append(&mut recursive_elem_vec_fill(elem, indent, indent_depth + 1, &format!("{};{}",
                                             elem.name,
                                             elem.attributes
                                             .iter()
                                             .map(|(key, value)| format!("{}:{}", key, value.as_ref().unwrap()))
                                             .collect::<Vec<String>>()
-                                            .join(";"))
-                                    .as_str()));
+                                            .join(";"))));
                     }
                     "a" => {
-                        elem_vec.append(&mut recursive_elem_vec_fill(elem, indent, indent_depth, format!("{}|{}",
+                        elem_vec.append(&mut recursive_elem_vec_fill(elem, indent, indent_depth, &format!("{};{}",
                                             elem.name,
                                             elem.attributes
                                             .iter()
                                             .map(|(key, value)| format!("{}:{}", key, value.as_ref().unwrap()))
                                             .collect::<Vec<String>>()
-                                            .join(";"))
-                                    .as_str()));
+                                            .join(";"))));
                     }
                     "script" => {}
                     _ => {
-                        elem_vec.append(&mut recursive_elem_vec_fill(elem, indent, indent_depth, format!("{}|{}",
+                        elem_vec.append(&mut recursive_elem_vec_fill(elem, indent, indent_depth, &format!("{};{}",
                                             elem.name,
                                             elem.attributes
                                             .iter()
                                             .map(|(key, value)| format!("{}:{}", key, value.as_ref().unwrap()))
                                             .collect::<Vec<String>>()
-                                            .join(";"))
-                                    .as_str()));
+                                            .join(";"))));
                     }
                 },
                 Text(text) => {
@@ -86,6 +82,7 @@ fn recursive_elem_vec_fill(curr_elem: &RealElement, indent: &str, indent_depth: 
 // }
 
 // const PACKET_MAX_BYTES: usize = 4096;
+const DEBUG_MODE: bool = true;
 
 fn main() -> IoResult<()> {
     // commands -> <command, arguments>
@@ -172,7 +169,7 @@ fn main() -> IoResult<()> {
         String::from("==== \"Simple\" Web Browser! ====\n====  Available Commands:  ====\n");
     for (c_command, c_args) in &commands {
         command_help.push_str(
-            format!("    {} {}\n        {}\n\n", c_command, c_args[0], c_args[1]).as_str(),
+            &format!("    {} {}\n        {}\n\n", c_command, c_args[0], c_args[1])
         );
     }
     command_help.push_str("FYI, URL and PORT defaults to 'localhost' and '80' respectively.\nPress tab to switch between web page and command line view.\n");
@@ -213,9 +210,30 @@ fn main() -> IoResult<()> {
                         erase();
                         if elem_vec.is_empty() { addstr("You haven't loaded any site.\nLoad a website through the command line!"); }
                         else {
+                            // TODO: handle extra info for each element 
+                            // String conversion done, now just the display
                             addstr(page_title.as_str());
                             for elem in &elem_vec {
-                                addstr(format!("{elem}\n").as_str());
+                                let elem: Vec<&str> = elem.rsplitn(3, ' ').collect();
+                                let (text, elem_metadata): (&str, Vec<&str>) = (elem[2], elem[0].split(';').collect());
+                                let (tag, attributes): (&str, HashMap<&str, &str>) = (elem_metadata[0], HashMap::from_iter(
+                                        elem_metadata[1..]
+                                        .iter()
+                                        .map(|attr_pair| attr_pair
+                                             .split_once(':')
+                                             .unwrap_or_default()
+                                             )));
+                                if DEBUG_MODE {
+                                    addstr(&format!("{text} Info: (Tag Name: {tag}, Attribute:"));
+                                    for (name, value) in &attributes {
+                                        if name.is_empty() {
+                                            addstr("None");
+                                            break;
+                                        }
+                                        addstr(&format!(" {}={}", name, value));
+                                    }
+                                    addstr(")\n");
+                                } else {}
                             }
                         }
                     }
@@ -232,11 +250,12 @@ fn main() -> IoResult<()> {
                     mvdelch(getcury(screen), getcurx(screen)-1);
                     command_line.pop();
                 },
-                _ => {
+                32 ..= 126 => {
                     if page_view { continue; }
                     addch(ch as u32);
                     command_line.push_str(&(ch as u8 as char).to_string());
-                }
+                },
+                _ => {}
             }
         }
         
@@ -416,16 +435,16 @@ fn main() -> IoResult<()> {
                                 10 => {
                                     break 'auth_input;
                                 },
-                                9 => {},
                                 127 => {
                                     if getcurx(screen) < 3 { continue; }
                                     mvdelch(cmd_line_curr_y, getcurx(screen)-1);
                                     auth.pop();
                                 },
-                                _ => {
+                                32 ..= 126 => {
                                     addch(ch as u32);
                                     auth.push_str(&(ch as u8 as char).to_string());
-                                }
+                                },
+                                _ => {}
                             }
                         }
                         mvdelch(cmd_line_curr_y, 2);
@@ -446,7 +465,7 @@ fn main() -> IoResult<()> {
                         continue;
                     } else if response_code >= 400 {
                         mv(cmd_line_curr_y + 2, 0);
-                        addstr(format!("ERROR: {response_code} {message}").as_str());
+                        addstr(&format!("ERROR: {response_code} {message}"));
                         mv(cmd_line_curr_y, 2);
                         clrtoeol();
 
@@ -466,7 +485,7 @@ fn main() -> IoResult<()> {
                             .to_string();
 
                         mv(cmd_line_curr_y + 2, 0);
-                        addstr(format!("INFO: Redirecting to {urn}").as_str());
+                        addstr(&format!("INFO: Redirecting to {urn}"));
                         mv(cmd_line_curr_y, 2);
                         clrtoeol();
 
@@ -475,7 +494,7 @@ fn main() -> IoResult<()> {
 
                     if proc_header.get(&String::from("Content-Type")).is_none() {
                         mv(cmd_line_curr_y + 2, 0);
-                        addstr(format!("ERROR: Content type is not known").as_str());
+                        addstr("ERROR: Content type is not known");
                         mv(cmd_line_curr_y, 2);
                         clrtoeol();
                         break 'webpage_load;
@@ -553,23 +572,15 @@ fn main() -> IoResult<()> {
                             };
 
                             mv(cmd_line_curr_y + 2, 0);
-                            addstr(format!(
+                            addstr(&format!(
                                     "INFO: Finished downloading {} with the size of {:.1} {}",
-                                filename, size, metric)
-                                .as_str());
+                                filename, size, metric));
                             mv(cmd_line_curr_y, 2);
                             clrtoeol();
                         }
                     } else {
                         // Clear saved previous web page
                         elem_vec = vec![];
-                        // println!("Status Line: {:?}", proc_status_line);
-                        // println!();
-
-                        // println!("Header: {:?}", proc_header);
-                        // println!();
-
-                        // println!("Body:\n{}", String::from_utf8_lossy(proc_body));
 
                         // HTML Parsing and Simple Display
                         // WARNING: Uses a non-production html parsing library, not sure by how much

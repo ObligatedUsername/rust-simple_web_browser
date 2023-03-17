@@ -23,41 +23,51 @@ fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 // Recursively fill a vector with formatted string of elements from top to bottom
 // Notes for certain elements:
 // ---- only lists are indented, everything else follows their current depth,
-// ---- TODO: open links (handle this somewhere)
-fn recursive_elem_vec_fill(curr_elem: &RealElement, indent: &str, indent_depth: usize, extras: &str) -> Vec<String> {
+// ---- TODO: open links (Setup a better data structure for these elements) (just use a huge
+//            string)
+fn recursive_elem_vec_fill(curr_elem: &RealElement, indent: &str, indent_depth: usize, extras: &str)
+    -> Vec<String> {
     let mut elem_vec: Vec<String> = vec![];
     if !curr_elem.children.is_empty() {
         for child_elem in curr_elem.children.iter() {
             match child_elem {
                 Element(elem) => match elem.name.as_str() {
                     "ol" | "ul" => {
-                        elem_vec.append(&mut recursive_elem_vec_fill(elem, indent, indent_depth + 1, extras));
+                        elem_vec.append(&mut recursive_elem_vec_fill(elem, indent, indent_depth + 1, format!("{}|{}",
+                                            elem.name,
+                                            elem.attributes
+                                            .iter()
+                                            .map(|(key, value)| format!("{}:{}", key, value.as_ref().unwrap()))
+                                            .collect::<Vec<String>>()
+                                            .join(";"))
+                                    .as_str()));
                     }
                     "a" => {
-                        elem_vec.append(&mut recursive_elem_vec_fill(
-                            elem,
-                            indent,
-                            indent_depth,
-                            format!(
-                                " -> {}",
-                                elem.attributes
-                                    .get(&String::from("href"))
-                                    .cloned()
-                                    .unwrap()
-                                    .unwrap()
-                            )
-                            .as_str(),
-                        ));
+                        elem_vec.append(&mut recursive_elem_vec_fill(elem, indent, indent_depth, format!("{}|{}",
+                                            elem.name,
+                                            elem.attributes
+                                            .iter()
+                                            .map(|(key, value)| format!("{}:{}", key, value.as_ref().unwrap()))
+                                            .collect::<Vec<String>>()
+                                            .join(";"))
+                                    .as_str()));
                     }
                     "script" => {}
                     _ => {
-                        elem_vec.append(&mut recursive_elem_vec_fill(elem, indent, indent_depth, extras));
+                        elem_vec.append(&mut recursive_elem_vec_fill(elem, indent, indent_depth, format!("{}|{}",
+                                            elem.name,
+                                            elem.attributes
+                                            .iter()
+                                            .map(|(key, value)| format!("{}:{}", key, value.as_ref().unwrap()))
+                                            .collect::<Vec<String>>()
+                                            .join(";"))
+                                    .as_str()));
                     }
                 },
                 Text(text) => {
-                    elem_vec.push(format!("{}{}{}", indent.repeat(indent_depth), text, extras));
-                }
-                Comment(_) => {}
+                    elem_vec.push(format!("{}{} >> {}", indent.repeat(indent_depth), text, extras));
+                },
+                _ => {}
             }
         }
     }
@@ -177,6 +187,7 @@ fn main() -> IoResult<()> {
 
     // Web Page and View
     let mut page_view = false;
+    let mut page_title = String::new();
     let mut elem_vec: Vec<String> = vec![];
 
     // Fetch and Download Web Pages and Files
@@ -186,15 +197,15 @@ fn main() -> IoResult<()> {
     let cmd_line_curr_y = getcury(screen);
     
     let mut command_line = String::new();
-    loop {
+    'cmd_line: loop {
         refresh();
 
-        loop {
+        'cmd_line_input: loop {
             let ch = getch();
 
             match ch as u8 {
                 10 if !page_view => {
-                    break;
+                    break 'cmd_line_input;
                 },
                 9 => {
                     page_view = !page_view;
@@ -202,6 +213,7 @@ fn main() -> IoResult<()> {
                         erase();
                         if elem_vec.is_empty() { addstr("You haven't loaded any site.\nLoad a website through the command line!"); }
                         else {
+                            addstr(page_title.as_str());
                             for elem in &elem_vec {
                                 addstr(format!("{elem}\n").as_str());
                             }
@@ -232,6 +244,7 @@ fn main() -> IoResult<()> {
         clrtobot();
 
         let (command, args): (String, Vec<Vec<String>>) = command_line
+            .trim()
             .split_once(' ')
             .map(|t| {
                 (
@@ -271,7 +284,7 @@ fn main() -> IoResult<()> {
                 };
 
                 // Request Handling
-                loop {
+                'webpage_load: loop {
                     // Loading indicator starts here
                     let (tx, rx) = mpsc::channel::<Option<&str>>();
 
@@ -392,16 +405,16 @@ fn main() -> IoResult<()> {
                     if response_code == 401 {
                         // HTTP Basic Auth
                         mv(cmd_line_curr_y + 2, 0);
-                        addstr("STATUS: Authorization is needed, please enter your username and password, separated by a space\n(you may ENTER if you don't wish to input your credentials.):");
+                        addstr("INFO: Authorization is needed, please enter your username and password, separated by a space\n(you may ENTER if you don't wish to input your credentials.):");
                         mv(cmd_line_curr_y, 2);
                         clrtoeol();
 
-                        loop {
+                        'auth_input: loop {
                             let ch = getch();
 
                             match ch as u8 {
                                 10 => {
-                                    break;
+                                    break 'auth_input;
                                 },
                                 9 => {},
                                 127 => {
@@ -420,7 +433,7 @@ fn main() -> IoResult<()> {
 
                         if !auth.contains(' ') {
                             auth = String::new();
-                            break;
+                            break 'webpage_load;
                         }
                         auth = String::from("\r\nAuthorization: ")
                             + proc_header.get(&String::from("WWW-Authenticate")).unwrap()[0][0]
@@ -437,7 +450,7 @@ fn main() -> IoResult<()> {
                         mv(cmd_line_curr_y, 2);
                         clrtoeol();
 
-                        break;
+                        break 'webpage_load;
                     }
 
                     // >> Redirect Checks
@@ -453,22 +466,35 @@ fn main() -> IoResult<()> {
                             .to_string();
 
                         mv(cmd_line_curr_y + 2, 0);
-                        addstr(format!("STATUS: Redirecting to {urn}").as_str());
+                        addstr(format!("INFO: Redirecting to {urn}").as_str());
                         mv(cmd_line_curr_y, 2);
                         clrtoeol();
 
                         continue;
                     }
 
-                    let mime_type = &proc_header.get(&String::from("Content-Type")).expect("ERROR: Content type is not found")[0][0];
+                    if proc_header.get(&String::from("Content-Type")).is_none() {
+                        mv(cmd_line_curr_y + 2, 0);
+                        addstr(format!("ERROR: Content type is not known").as_str());
+                        mv(cmd_line_curr_y, 2);
+                        clrtoeol();
+                        break 'webpage_load;
+                    }
+
+                    let mime_type = &proc_header.get(&String::from("Content-Type")).unwrap().clone()[0][0];
 
                     if command == "download" {
                         // >> File Downloads
                         let download_file_path = "./downloads";
 
+                        DirBuilder::new()
+                            .recursive(true)
+                            .create(download_file_path)
+                            .unwrap();
+
                         let unnamed_counts = fs::read_dir(download_file_path)?
                             .map(|res| {
-                                res.expect("ERROR: failed reading from downloads")
+                                res.unwrap()
                                     .file_name()
                                     .into_string()
                                     .unwrap()
@@ -482,7 +508,7 @@ fn main() -> IoResult<()> {
                                     .nth(1)
                                     .unwrap()
                                     .parse::<isize>()
-                                    .expect("ERROR: wrong format for unnamed file")
+                                    .unwrap()
                             })
                             .max()
                             .unwrap_or(-1)
@@ -509,11 +535,6 @@ fn main() -> IoResult<()> {
                             .keys()
                             .any(|s| s == &mime_type.as_str())
                         {
-                            DirBuilder::new()
-                                .recursive(true)
-                                .create(download_file_path)
-                                .unwrap();
-
                             let mut f = File::create(format!("{download_file_path}/{filename}"))?;
                             f.write_all(proc_body)?;
 
@@ -533,7 +554,7 @@ fn main() -> IoResult<()> {
 
                             mv(cmd_line_curr_y + 2, 0);
                             addstr(format!(
-                                    "STATUS: Finished downloading {} with the size of {:.1} {}",
+                                    "INFO: Finished downloading {} with the size of {:.1} {}",
                                 filename, size, metric)
                                 .as_str());
                             mv(cmd_line_curr_y, 2);
@@ -577,21 +598,20 @@ fn main() -> IoResult<()> {
                                 .children[0]
                                 .text()
                                 .unwrap();
-
-                            elem_vec.push(format!("Title: {}\n", title));
+                            page_title = format!("Title: {}\n\n", title);
                             elem_vec.append(&mut recursive_elem_vec_fill(&body, "  ", 0, ""));
                         }
 
                         mv(cmd_line_curr_y + 2, 0);
-                        addstr(&format!("STATUS: Finished reading {url}:{port}/{urn}"));
+                        addstr(&format!("INFO: Finished reading {url}:{port}/{urn}"));
                         mv(cmd_line_curr_y, 2);
                         clrtoeol();
                     }
 
-                    break;
+                    break 'webpage_load;
                 }
             } else if command == "quit" {
-                break;
+                break 'cmd_line;
             } else {
                 mv(cmd_line_curr_y + 2, 0);
                 addstr(&format!("ERROR: Command '{command}' not recognized"));

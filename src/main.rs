@@ -25,6 +25,8 @@ fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 // ---- only lists are indented, everything else follows their current depth,
 // ---- considering adding div, section, and more to come, need more research on these layout tags
 // ---- TODO: add text-less elements to the vector too with an empty text
+// ---- TODO: for the far future, might want to rework this entire system, i feel there's a lot of
+// ----       unnecessary steps for parsing -> displaying these elements
 fn recursive_elem_vec_fill(
     curr_elem: &RealElement,
     indent: &str,
@@ -35,69 +37,48 @@ fn recursive_elem_vec_fill(
     if !curr_elem.children.is_empty() {
         for child_elem in curr_elem.children.iter() {
             match child_elem {
-                Element(elem) => match elem.name.as_str() {
-                    "ol" | "ul" => {
-                        elem_vec.append(&mut recursive_elem_vec_fill(
-                            elem,
-                            indent,
-                            indent_depth + 1,
-                            &format!(
-                                "{};{}",
-                                elem.name,
-                                elem.attributes
-                                    .iter()
-                                    .map(|(key, value)| format!(
-                                        "{}:{}",
-                                        key,
-                                        value.as_ref().unwrap()
-                                    ))
-                                    .collect::<Vec<String>>()
-                                    .join(";")
-                            ),
-                        ));
-                    }
-                    "a" => {
-                        elem_vec.append(&mut recursive_elem_vec_fill(
-                            elem,
-                            indent,
-                            indent_depth,
-                            &format!(
-                                "{};{}",
-                                elem.name,
-                                elem.attributes
-                                    .iter()
-                                    .map(|(key, value)| format!(
-                                        "{}:{}",
-                                        key,
-                                        value.as_ref().unwrap()
-                                    ))
-                                    .collect::<Vec<String>>()
-                                    .join(";")
-                            ),
-                        ));
-                    }
-                    "script" => {}
-                    _ => {
-                        // TODO: add match expression to check if current element has children
-                        // other than text
-                        elem_vec.append(&mut recursive_elem_vec_fill(
-                            elem,
-                            indent,
-                            indent_depth,
-                            &format!(
-                                "{};{}",
-                                elem.name,
-                                elem.attributes
-                                    .iter()
-                                    .map(|(key, value)| format!(
-                                        "{}:{}",
-                                        key,
-                                        value.as_ref().unwrap()
-                                    ))
-                                    .collect::<Vec<String>>()
-                                    .join(";")
-                            ),
-                        ));
+                Element(elem) => {
+                    match elem.name.as_str() {
+                        "script" => {}
+                        "style" => {}
+                        _ => {
+                            if !elem.children.iter().all(|e| e.text().is_some()) {
+                                elem_vec.push(format!(" >> {}", &format!(
+                                    "{};{}",
+                                    elem.name,
+                                    elem.attributes
+                                        .iter()
+                                        .map(|(key, value)| format!(
+                                            "{}:{}",
+                                            key,
+                                            value.as_ref().unwrap()
+                                        ))
+                                        .collect::<Vec<String>>()
+                                        .join(";")
+                                )));
+                            }
+                            elem_vec.append(&mut recursive_elem_vec_fill(
+                                elem,
+                                indent,
+                                indent_depth + match elem.name.as_str() {
+                                    "ol" | "ul" | "div" => 1,
+                                    _ => 0
+                                },
+                                &format!(
+                                    "{};{}",
+                                    elem.name,
+                                    elem.attributes
+                                        .iter()
+                                        .map(|(key, value)| format!(
+                                            "{}:{}",
+                                            key,
+                                            value.as_ref().unwrap()
+                                        ))
+                                        .collect::<Vec<String>>()
+                                        .join(";")
+                                ),
+                            ));
+                        }
                     }
                 },
                 Text(text) => {
@@ -131,6 +112,7 @@ fn recursive_elem_vec_fill(
 const DEBUG_MODE: bool = false;
 const REGULAR_PAIR: i16 = 0;
 const HIGHLIGHTED_PAIR: i16 = 1;
+const HYPERLINK_PAIR: i16 = 2;
 
 fn main() -> IoResult<()> {
     // commands -> <command, arguments>
@@ -223,7 +205,8 @@ fn main() -> IoResult<()> {
     }
     command_help.push_str("FYI, URL and PORT defaults to 'localhost' and '80' respectively. HTTPS is not supported as of now.\nPress tab to switch between web page and command line view.\n");
 
-    let (mut url, mut port, mut urn) = (String::new(), String::new(), String::new());
+    let (mut url, mut urn) = (String::new(), String::new());
+    let mut port;
     let mut auth = String::new();
 
     // User Interface -- ncurses
@@ -235,13 +218,17 @@ fn main() -> IoResult<()> {
     // Current Line Highlighting
     start_color();
     init_pair(REGULAR_PAIR, COLOR_WHITE, COLOR_BLACK);
-    init_pair(HIGHLIGHTED_PAIR, COLOR_BLACK, COLOR_WHITE);
+    init_pair(HIGHLIGHTED_PAIR, COLOR_BLUE, COLOR_BLACK);
+    init_pair(HYPERLINK_PAIR, COLOR_GREEN, COLOR_BLACK);
 
     // Web Page and View
     let mut web_page_view = false;
     let mut page_title = String::new();
     let mut elem_vec: Vec<String> = vec![];
-    let mut curr_page_interactive_elem: Vec<(i32, String)> = vec![];
+
+    // Vec<(pos_y, pos_x, link)>
+    let mut curr_page_interactive_elem: Vec<(i32, i32, String)> = vec![]; 
+
     let mut web_page_cursor_pos_index = -1;
     let mut page_read = false;
 
@@ -286,7 +273,7 @@ fn main() -> IoResult<()> {
                 }
                 10 => {
                     if web_page_cursor_pos_index > -1 {
-                        match &curr_page_interactive_elem[web_page_cursor_pos_index as usize].1 {
+                        match &curr_page_interactive_elem[web_page_cursor_pos_index as usize].2 {
                             x if x.starts_with('#') || x == &format!("http://{url}/{urn}") => {
                                 continue;
                             }
@@ -301,7 +288,7 @@ fn main() -> IoResult<()> {
 
                         command_line.push_str(&format!(
                             "open {}",
-                            curr_page_interactive_elem[web_page_cursor_pos_index as usize].1
+                            curr_page_interactive_elem[web_page_cursor_pos_index as usize].2
                         ));
                         break 'cmd_line_input;
                     }
@@ -334,6 +321,7 @@ fn main() -> IoResult<()> {
                     addstr("Visiting links through here will take you back to the command line, please be cautious!\n");
                     addstr("Scroll up and down through links by using W/S, K/J, or arrow up/arrow down respectively!\n\n");
                     addstr(page_title.as_str());
+                    let mut add_nl = false;
                     for elem in elem_vec.clone() {
                         let elem: Vec<String> = elem.rsplitn(3, ' ').map(String::from).collect();
                         let (text, elem_metadata): (String, Vec<String>) = (
@@ -362,6 +350,7 @@ fn main() -> IoResult<()> {
                             }
                             addstr(")\n");
                         } else {
+                            // TODO: handle inline links
                             if !page_read {
                                 match tag.as_str() {
                                     "a" => {
@@ -370,41 +359,61 @@ fn main() -> IoResult<()> {
                                         }
                                         curr_page_interactive_elem.push((
                                             getcury(screen),
+                                            getcurx(screen),
                                             attributes
                                                 .get(&String::from("href"))
                                                 .unwrap()
-                                                .to_string(),
+                                                .to_string()
                                         ));
                                     }
                                     _ => {}
                                 }
                             }
 
+                            // Element Highlighting (for hyperlinks and a few others)
                             let pair = {
                                 if web_page_cursor_pos_index < 0 {
                                     REGULAR_PAIR
                                 } else if getcury(screen)
                                     == curr_page_interactive_elem
                                         [web_page_cursor_pos_index as usize]
-                                        .0
+                                        .0 &&
+                                        getcurx(screen)
+                                        == curr_page_interactive_elem[web_page_cursor_pos_index as usize].1
                                 {
                                     HIGHLIGHTED_PAIR
+                                } else if tag == "a" {
+                                    HYPERLINK_PAIR
                                 } else {
                                     REGULAR_PAIR
                                 }
                             };
 
-                            // TODO: handle inline links
                             attron(COLOR_PAIR(pair));
                             addstr(&format!(
                                 "{text}{}",
-                                match tag.as_str() {
-                                    "h1" | "li" => "\n".to_string(),
-                                    "a" => format!(
-                                        " -> {}\n",
-                                        attributes.get(&String::from("href")).unwrap()
-                                    ),
-                                    _ => String::new(),
+                                if !text.is_empty() {
+                                    let temp_end = match tag.as_str() {
+                                        "h1" | "p" | "li" => "\n".to_string(),
+                                        "a" => format!(
+                                            " -> {}",
+                                            attributes.get(&String::from("href")).unwrap()
+                                        ),
+                                        _ => "".to_string(),
+                                    };
+                                    format!("{temp_end}{}",
+                                            if add_nl {
+                                                add_nl = false;
+                                                "\n"
+                                            } else { "" })
+                                } else {
+                                    match tag.as_str() {
+                                        "p" | "li" => {
+                                            add_nl = true;
+                                        },
+                                        _ => {},
+                                    };
+                                    "".to_string()
                                 }
                             ));
                             attroff(COLOR_PAIR(pair));

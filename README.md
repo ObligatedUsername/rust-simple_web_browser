@@ -24,6 +24,7 @@ URI defaults to **localhost:80/**
 - [x] loading indicator
 - [x] metric for file size
 - [x] a much more interactive TUI (currently using ncurses-rs)
+- [x] scrolling thru links with keebs
 
 #### Quality Of Life
 - [x] incremental auto-naming for nameless files

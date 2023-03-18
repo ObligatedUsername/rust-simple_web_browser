@@ -24,7 +24,6 @@ fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 // Notes for certain elements:
 // ---- only lists are indented, everything else follows their current depth,
 // ---- considering adding div, section, and more to come, need more research on these layout tags
-// ---- TODO: add text-less elements to the vector too with an empty text
 // ---- TODO: for the far future, might want to rework this entire system, i feel there's a lot of
 // ----       unnecessary steps for parsing -> displaying these elements
 fn recursive_elem_vec_fill(
@@ -226,11 +225,12 @@ fn main() -> IoResult<()> {
     let mut page_title = String::new();
     let mut elem_vec: Vec<String> = vec![];
 
-    // Vec<(pos_y, pos_x, link)>
-    let mut curr_page_interactive_elem: Vec<(i32, i32, String)> = vec![]; 
+    // >> Vec<(pos_y, pos_x, link)>
+    let mut hyperlink_pos: Vec<(i32, i32, String)> = vec![]; 
 
     let mut web_page_cursor_pos_index = -1;
-    let mut page_read = false;
+
+    let (mut screen_y_max, mut screen_x_max) = (0, 0);
 
     // Fetch and Download Web Pages and Files
     addstr(&command_help);
@@ -242,6 +242,11 @@ fn main() -> IoResult<()> {
     'cmd_line: loop {
         refresh();
 
+        // Web Page Content
+        // Vec<(content, element)>
+        let mut web_page_content: Vec<(String, String)>  = vec![];
+        let (mut scroll, mut lines) = (0, 0);
+        getmaxyx(screen, &mut screen_y_max, &mut screen_x_max);
         'cmd_line_input: loop {
             let ch = getch();
 
@@ -273,7 +278,7 @@ fn main() -> IoResult<()> {
                 }
                 10 => {
                     if web_page_cursor_pos_index > -1 {
-                        match &curr_page_interactive_elem[web_page_cursor_pos_index as usize].2 {
+                        match &hyperlink_pos[web_page_cursor_pos_index as usize].2 {
                             x if x.starts_with('#') || x == &format!("http://{url}/{urn}") => {
                                 continue;
                             }
@@ -288,137 +293,182 @@ fn main() -> IoResult<()> {
 
                         command_line.push_str(&format!(
                             "open {}",
-                            curr_page_interactive_elem[web_page_cursor_pos_index as usize].2
+                            hyperlink_pos[web_page_cursor_pos_index as usize].2
                         ));
                         break 'cmd_line_input;
                     }
                 }
                 119 | 107 | KEY_UP if web_page_cursor_pos_index > -1 => {
                     if web_page_cursor_pos_index == 0 {
-                        web_page_cursor_pos_index = curr_page_interactive_elem.len() as i32 - 1;
+                        web_page_cursor_pos_index = hyperlink_pos.len() as i32 - 1;
+                        scroll = lines - screen_y_max;
+                        if scroll < 0 { scroll = 0; }
                     } else {
                         web_page_cursor_pos_index -= 1;
                     }
+
+                    if hyperlink_pos[web_page_cursor_pos_index as usize].0 - scroll < 8
+                        && hyperlink_pos[web_page_cursor_pos_index as usize].0 - scroll > -1
+                        && scroll > 0 {
+                            scroll -= hyperlink_pos[web_page_cursor_pos_index as usize + 1].0
+                                - hyperlink_pos[web_page_cursor_pos_index as usize].0;
+                            if scroll < 0 { scroll += 0 - scroll; }
+                        }
                 }
                 115 | 106 | KEY_DOWN if web_page_cursor_pos_index > -1 => {
-                    if web_page_cursor_pos_index == curr_page_interactive_elem.len() as i32 - 1 {
+                    if web_page_cursor_pos_index == hyperlink_pos.len() as i32 - 1 {
                         web_page_cursor_pos_index = 0;
+                        scroll = 0;
                     } else {
                         web_page_cursor_pos_index += 1;
                     }
+
+                    if hyperlink_pos[web_page_cursor_pos_index as usize].0 - scroll > screen_y_max - 8
+                        && hyperlink_pos[web_page_cursor_pos_index as usize].0 - scroll < lines + 1
+                        && screen_y_max + scroll < lines {
+                            scroll += hyperlink_pos[web_page_cursor_pos_index as usize].0
+                                - hyperlink_pos[web_page_cursor_pos_index as usize - 1].0;
+                            if scroll + screen_y_max > lines { scroll -= scroll + screen_y_max - lines; }
+                        }
                 }
                 _ => {}
             }
 
-            // TODO: scrolling, which needs better method for rendering
             if web_page_view {
                 erase();
-                if elem_vec.is_empty() {
-                    addstr(
-                        "You haven't loaded any site.\nLoad a website through the command line!",
-                    );
-                } else {
-                    addstr("Visiting links through here will take you back to the command line, please be cautious!\n");
-                    addstr("Scroll up and down through links by using W/S, K/J, or arrow up/arrow down respectively!\n\n");
-                    addstr(page_title.as_str());
-                    let mut add_nl = false;
-                    for elem in elem_vec.clone() {
-                        let elem: Vec<String> = elem.rsplitn(3, ' ').map(String::from).collect();
-                        let (text, elem_metadata): (String, Vec<String>) = (
-                            elem[2].clone(),
-                            elem[0].split(';').map(String::from).collect(),
-                        );
-                        let (tag, attributes): (String, HashMap<String, String>) = (
-                            elem_metadata[0].clone(),
-                            HashMap::from_iter(elem_metadata[1..].iter().map(|attr_pair| {
-                                attr_pair
-                                    .split_once(':')
-                                    .map(|opt_str| {
-                                        (String::from(opt_str.0), String::from(opt_str.1))
-                                    })
-                                    .unwrap_or_default()
-                            })),
-                        );
-                        if DEBUG_MODE {
-                            addstr(&format!("{text} Info: (Tag Name: {tag}, Attribute:"));
-                            for (name, value) in &attributes {
-                                if name.is_empty() {
-                                    addstr("None");
-                                    break;
-                                }
-                                addstr(&format!(" {}={}", name, value));
-                            }
-                            addstr(")\n");
-                        } else {
-                            // TODO: handle inline links
-                            if !page_read {
-                                match tag.as_str() {
-                                    "a" => {
-                                        if web_page_cursor_pos_index < 0 {
-                                            web_page_cursor_pos_index = 0;
-                                        }
-                                        curr_page_interactive_elem.push((
-                                            getcury(screen),
-                                            getcurx(screen),
-                                            attributes
-                                                .get(&String::from("href"))
-                                                .unwrap()
-                                                .to_string()
-                                        ));
+                if web_page_content.is_empty() {
+                    if elem_vec.is_empty() {
+                        web_page_content.push((
+                            "You haven't loaded any site.\nLoad a website through the command line!".to_string(),
+                            "".to_string()
+                        ));
+                    } else {
+                        web_page_content.push((
+                                "Visiting links through here will take you back to the command line, please be cautious!\n".to_string(),
+                                "".to_string()
+                                ));
+                        web_page_content.push((
+                                "Scroll up and down through links by using W/S, K/J, or arrow up/arrow down respectively!\n".to_string(),
+                                "".to_string()
+                                ));
+                        web_page_content.push(("\n".to_string(), "".to_string()));
+                        web_page_content.push((page_title.clone(), "".to_string()));
+                        web_page_content.push(("\n".to_string(), "".to_string()));
+                        let mut add_nl = false; // extra newline for elements like li & div
+                        let (mut cur_y, mut cur_x): (i32, i32) = (5, 0);
+                        for elem in elem_vec.clone() {
+                            let elem: Vec<String> = elem.rsplitn(3, ' ').map(String::from).collect();
+                            let (text, elem_metadata): (String, Vec<String>) = (
+                                elem[2].clone(),
+                                elem[0].split(';').map(String::from).collect(),
+                            );
+                            let (tag, attributes): (String, HashMap<String, String>) = (
+                                elem_metadata[0].clone(),
+                                HashMap::from_iter(elem_metadata[1..].iter().map(|attr_pair| {
+                                    attr_pair
+                                        .split_once(':')
+                                        .map(|opt_str| {
+                                            (String::from(opt_str.0), String::from(opt_str.1))
+                                        })
+                                        .unwrap_or_default()
+                                })),
+                            );
+                            match tag.as_str() {
+                                "a" => {
+                                    if web_page_cursor_pos_index < 0 {
+                                        web_page_cursor_pos_index = 0;
                                     }
-                                    _ => {}
+                                    hyperlink_pos.push((
+                                        cur_y,
+                                        cur_x,
+                                        attributes
+                                            .get(&String::from("href"))
+                                            .unwrap()
+                                            .to_string()
+                                    ));
                                 }
+                                _ => {}
                             }
 
-                            // Element Highlighting (for hyperlinks and a few others)
-                            let pair = {
-                                if web_page_cursor_pos_index < 0 {
-                                    REGULAR_PAIR
-                                } else if getcury(screen)
-                                    == curr_page_interactive_elem
-                                        [web_page_cursor_pos_index as usize]
-                                        .0 &&
-                                        getcurx(screen)
-                                        == curr_page_interactive_elem[web_page_cursor_pos_index as usize].1
-                                {
-                                    HIGHLIGHTED_PAIR
-                                } else if tag == "a" {
-                                    HYPERLINK_PAIR
-                                } else {
-                                    REGULAR_PAIR
-                                }
-                            };
-
-                            attron(COLOR_PAIR(pair));
-                            addstr(&format!(
-                                "{text}{}",
-                                if !text.is_empty() {
-                                    let temp_end = match tag.as_str() {
-                                        "h1" | "p" | "li" => "\n".to_string(),
-                                        "a" => format!(
-                                            " -> {}",
-                                            attributes.get(&String::from("href")).unwrap()
-                                        ),
-                                        _ => "".to_string(),
+                            if text.is_empty() {
+                                match tag.as_str() {
+                                    "p" | "li" => {
+                                        add_nl = true;
+                                    },
+                                    _ => {},
+                                };
+                            } else {
+                                web_page_content.push(({
+                                    let temp = format!(
+                                        "{text}{}", {
+                                            let temp_end = match tag.as_str() {
+                                                "h1" | "p" | "li" => {
+                                                    "\n".to_string()
+                                                },
+                                                "a" => format!( " -> {}", attributes.get(&String::from("href")).unwrap()),
+                                                _ => "".to_string(),
+                                            };
+                                            format!("{temp_end}{}",
+                                                    if add_nl {
+                                                        add_nl = false;
+                                                        "\n"
+                                                    } else { "" })
+                                        });
+                                    if temp.ends_with('\n') {
+                                        cur_x = 0;
+                                        cur_y += temp.chars().filter(|c| c == &'\n').collect::<Vec<_>>().len() as i32;
+                                    } else {
+                                        cur_x += temp.len() as i32;
                                     };
-                                    format!("{temp_end}{}",
-                                            if add_nl {
-                                                add_nl = false;
-                                                "\n"
-                                            } else { "" })
-                                } else {
-                                    match tag.as_str() {
-                                        "p" | "li" => {
-                                            add_nl = true;
-                                        },
-                                        _ => {},
-                                    };
-                                    "".to_string()
-                                }
-                            ));
-                            attroff(COLOR_PAIR(pair));
+                                    temp
+                                }, tag));
+                            }
                         }
+                        lines = cur_y
+                            + if !web_page_content[web_page_content.len()-1].0.is_empty()
+                            && !web_page_content[web_page_content.len()-1].0.ends_with('\n')
+                            { 1 } else { 0 };
                     }
+                }
+
+                let mut curr_newlines = 0;
+                'render: for (index, elem) in web_page_content.iter().enumerate() {
+                    if curr_newlines == screen_y_max + scroll { break 'render; }
+
+                    if curr_newlines >= scroll {
+                        // Element Highlighting (for hyperlinks and a few others)
+                        let pair = {
+                            if web_page_cursor_pos_index < 0 {
+                                REGULAR_PAIR
+                            } else if getcury(screen)
+                                == hyperlink_pos
+                                    [web_page_cursor_pos_index as usize]
+                                    .0 - scroll &&
+                                    getcurx(screen)
+                                    == hyperlink_pos[web_page_cursor_pos_index as usize].1
+                            {
+                                HIGHLIGHTED_PAIR
+                            } else if &elem.1 == "a" {
+                                HYPERLINK_PAIR
+                            } else {
+                                REGULAR_PAIR
+                            }
+                        };
+
+                        attron(COLOR_PAIR(pair));
+                        addstr(&elem.0);
+                        attroff(COLOR_PAIR(pair));
+                    }
+
+                    curr_newlines += elem.0.chars().filter(|c| c == &'\n').collect::<Vec<_>>().len() as i32;
+                    if index == web_page_content.len()-1
+                        && !elem.0.is_empty()
+                        && !elem.0.ends_with('\n')
+                        { curr_newlines += 1; }
+                }
+                if DEBUG_MODE && !hyperlink_pos.is_empty() {
+                    let mut f = File::create("temp")?;
+                    f.write_all(format!("{curr_newlines} {scroll} {lines} {screen_y_max}\n{web_page_cursor_pos_index}\n{:#?}\n{web_page_content:#?}", hyperlink_pos[web_page_cursor_pos_index as usize]).as_bytes())?;
                 }
             }
             refresh();
@@ -776,7 +826,7 @@ fn main() -> IoResult<()> {
                                 .children[0]
                                 .text()
                                 .unwrap();
-                            page_title = format!("Title: {}\n\n", title);
+                            page_title = format!("Title: {}\n", title);
                             elem_vec.append(&mut recursive_elem_vec_fill(&body, "  ", 0, ""));
                         }
 
@@ -785,8 +835,7 @@ fn main() -> IoResult<()> {
                         mv(cmd_line_curr_y, 2);
                         clrtoeol();
 
-                        page_read = false; // Loaded new page, of course it's not read yet
-                        curr_page_interactive_elem = vec![];
+                        hyperlink_pos = vec![];
                         web_page_cursor_pos_index = -1;
                     }
 

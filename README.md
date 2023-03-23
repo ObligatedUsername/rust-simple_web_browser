@@ -1,5 +1,9 @@
 # "Simple" Web Browser (in Rust)
 
+## WARNING
+Parsing can't handle self-closing tags, random characters (even HTML special characters), and to make matters worse, the parsed DOM is handled awfully.
+Expect multiple inline nested elements i.e. paragraphs, span, and hyperlinks nested within a div to look broken.
+
 ## Description
 A very simple (& slow?) TcpStream-based HTTP-only CLI browser.
 

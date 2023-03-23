@@ -38,8 +38,7 @@ fn recursive_elem_vec_fill(
             match child_elem {
                 Element(elem) => {
                     match elem.name.as_str() {
-                        "script" => {}
-                        "style" => {}
+                        "script" | "style" | "link" => {}
                         _ => {
                             if !elem.children.iter().all(|e| e.text().is_some()) {
                                 elem_vec.push(format!(" >> {}", &format!(
@@ -120,6 +119,7 @@ fn main() -> IoResult<()> {
         ("download", ["[URI]:[PORT]/[URN]", "\"Downloads file from the given URL. (Currently supporting most MIME types listed in web mdn)\""]),
         ("quit", ["", "\"Exit from this program.\""]),
     ]);
+
     // supported_download_file_types -> <mime_type, MIME type>
     let supported_download_file_types: HashMap<&str, &str> = HashMap::from([
         // Text-only types
@@ -192,6 +192,14 @@ fn main() -> IoResult<()> {
             "xlsx",
         ),
     ]);
+
+    let html_special_char: Vec<&str> = vec![
+        "&nbsp;",
+        "&nbsp",
+        "&rarr;",
+        "&gt;",
+        "&copy;",
+    ];
 
     // Command Configuration
     let mut command_help =
@@ -395,6 +403,9 @@ fn main() -> IoResult<()> {
                                     "p" | "li" => {
                                         add_nl = true;
                                     },
+                                    "img" => {
+                                        web_page_content.push((attributes.get(&String::from("alt")).unwrap_or(&"image with no alt".to_string()).to_string(), tag));
+                                    },
                                     _ => {},
                                 };
                             } else {
@@ -405,7 +416,7 @@ fn main() -> IoResult<()> {
                                                 "h1" | "p" | "li" => {
                                                     "\n".to_string()
                                                 },
-                                                "a" => format!( " -> {}", attributes.get(&String::from("href")).unwrap()),
+                                                "a" => format!(" -> {}", attributes.get(&String::from("href")).unwrap()),
                                                 _ => "".to_string(),
                                             };
                                             format!("{temp_end}{}",
@@ -588,8 +599,32 @@ fn main() -> IoResult<()> {
                     ));
                     byte_counter = find_subsequence(http_response, b"\r\n\r\n").unwrap() + 4;
 
-                    // Body (might only deal with HTML for now)
-                    body.append(&mut http_response[byte_counter..http_response.len()].to_owned());
+                    if DEBUG_MODE {
+                        let mut f = File::create("raw_page")?;
+                        f.write_all(http_response)?;
+                    }
+
+                    // Replace HTML special chars with similar characters
+                    let mut unspecial_html: Vec<u8> = vec![];
+                    'find_n_repl: loop {
+                        for char in &html_special_char {
+                            let search_char = find_subsequence(&http_response[byte_counter..http_response.len()], b"&");
+                            if search_char.is_none() || &http_response[byte_counter + search_char.unwrap()..byte_counter + search_char.unwrap() + char.len()] != char.as_bytes() { continue; }
+                            let char_index = search_char.unwrap();
+                            unspecial_html = [unspecial_html,
+                            http_response[byte_counter..(byte_counter + char_index)].to_vec()]
+                                .concat();
+                            byte_counter += char_index + char.len();
+                            if char_index > 0 { continue 'find_n_repl; }
+                        }
+                        unspecial_html = [unspecial_html,
+                        http_response[byte_counter..http_response.len()].to_vec()]
+                            .concat();
+                        break;
+                    }
+
+                    // Body
+                    body.append(&mut unspecial_html.to_owned());
 
                     // Stop loading indicator here
                     tx.send(Some("Loading finished!")).unwrap();
@@ -796,6 +831,10 @@ fn main() -> IoResult<()> {
                             clrtoeol();
                         }
                     } else {
+                        if DEBUG_MODE {
+                            let mut f = File::create("curr_page")?;
+                            f.write_all(proc_body)?;
+                        }
                         // Clear saved previous web page
                         elem_vec = vec![];
 
